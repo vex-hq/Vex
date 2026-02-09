@@ -1,0 +1,462 @@
+"""AgentGuard client -- the main developer-facing API for agent reliability.
+
+Provides three integration patterns:
+
+1. ``watch`` decorator -- wraps a function, captures input/output/latency,
+   and sends telemetry (async mode) or performs inline verification (sync mode).
+
+2. ``trace`` context manager -- gives fine-grained control over recording
+   intermediate steps, ground truth, and schema information.
+
+3. ``run`` explicit wrapper -- a framework-agnostic escape hatch that accepts
+   a callable and optional metadata.
+"""
+
+import asyncio
+import functools
+import logging
+import threading
+import time
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Generator, List, Optional
+
+from agentguard.config import GuardConfig
+from agentguard.models import ExecutionEvent, GuardResult, StepRecord
+from agentguard.transport import AsyncTransport, SyncTransport
+
+logger = logging.getLogger(__name__)
+
+
+class TraceContext:
+    """Accumulates execution data within a ``guard.trace()`` context manager.
+
+    Records intermediate steps, ground truth, schema, and the final output.
+    On context exit, builds an :class:`ExecutionEvent` and sends it through
+    the guard's processing pipeline.
+
+    Parameters
+    ----------
+    guard:
+        The parent :class:`AgentGuard` instance.
+    agent_id:
+        Identifier for the agent being traced.
+    task:
+        Optional human-readable task description.
+    input_data:
+        The input that triggered the trace (captured from context arguments).
+    """
+
+    def __init__(
+        self,
+        guard: "AgentGuard",
+        agent_id: str,
+        task: Optional[str] = None,
+        input_data: Any = None,
+    ) -> None:
+        self._guard = guard
+        self._agent_id = agent_id
+        self._task = task
+        self._input_data = input_data
+        self._output: Any = None
+        self._ground_truth: Any = None
+        self._schema: Optional[Dict[str, Any]] = None
+        self._steps: List[StepRecord] = []
+        self._start_time: float = time.monotonic()
+        self._metadata: Dict[str, Any] = {}
+        self.result: Optional[GuardResult] = None
+
+    def set_ground_truth(self, data: Any) -> None:
+        """Set the ground truth reference data for verification."""
+        self._ground_truth = data
+
+    def set_schema(self, schema: Dict[str, Any]) -> None:
+        """Set the expected output schema for validation."""
+        self._schema = schema
+
+    def step(
+        self,
+        step_type: str,
+        name: str,
+        input: Any = None,
+        output: Any = None,
+        duration_ms: Optional[float] = None,
+    ) -> None:
+        """Record an intermediate step in the execution trace.
+
+        Parameters
+        ----------
+        step_type:
+            Category of the step (e.g. ``"tool_call"``, ``"llm"``, ``"custom"``).
+        name:
+            Human-readable name for the step.
+        input:
+            Input data for the step.
+        output:
+            Output data from the step.
+        duration_ms:
+            Wall-clock duration of the step in milliseconds.
+        """
+        self._steps.append(
+            StepRecord(
+                step_type=step_type,
+                name=name,
+                input=input,
+                output=output,
+                duration_ms=duration_ms,
+            )
+        )
+
+    def record(self, output: Any) -> None:
+        """Record the final output of the traced execution."""
+        self._output = output
+
+    def _finalise(self) -> None:
+        """Build the execution event and process it through the guard."""
+        elapsed_ms = (time.monotonic() - self._start_time) * 1000.0
+
+        event = ExecutionEvent(
+            agent_id=self._agent_id,
+            task=self._task,
+            input=self._input_data,
+            output=self._output,
+            steps=self._steps,
+            latency_ms=elapsed_ms,
+            ground_truth=self._ground_truth,
+            schema_definition=self._schema,
+            metadata=self._metadata,
+        )
+
+        self.result = self._guard._process_event(event)
+
+
+class AgentGuard:
+    """The main AgentGuard client for agent reliability and observability.
+
+    Supports two operational modes:
+
+    - **async** (default): Events are buffered and flushed in batches to the
+      Ingestion API.  ``watch``/``run``/``trace`` return immediately with a
+      pass-through :class:`GuardResult`.
+
+    - **sync**: Each event is sent to the Sync Verification Gateway for inline
+      verification.  The returned :class:`GuardResult` contains the server's
+      confidence score and action recommendation.
+
+    Parameters
+    ----------
+    api_key:
+        API key for authenticating with AgentGuard backend services.
+    config:
+        Optional configuration object.  Defaults to async mode with standard
+        thresholds.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        config: Optional[GuardConfig] = None,
+    ) -> None:
+        self.api_key = api_key
+        self.config = config or GuardConfig()
+
+        # Always create async transport for telemetry
+        self._async_transport = AsyncTransport(
+            api_url=self.config.api_url,
+            api_key=self.api_key,
+            flush_interval_s=self.config.flush_interval_s,
+            flush_batch_size=self.config.flush_batch_size,
+            timeout_s=self.config.timeout_s,
+        )
+
+        # Create sync transport only when needed for inline verification
+        self._sync_transport: Optional[SyncTransport] = None
+        if self.config.mode == "sync":
+            self._sync_transport = SyncTransport(
+                api_url=self.config.api_url,
+                api_key=self.api_key,
+                timeout_s=self.config.timeout_s,
+            )
+
+        # Background event loop for async flushing
+        self._loop = asyncio.new_event_loop()
+        self._flush_stop = threading.Event()
+        self._flush_thread = threading.Thread(
+            target=self._flush_loop,
+            daemon=True,
+            name="agentguard-flush",
+        )
+        self._flush_thread.start()
+        self._closed = False
+
+    # ------------------------------------------------------------------
+    # Background flush loop
+    # ------------------------------------------------------------------
+
+    def _flush_loop(self) -> None:
+        """Periodically flush buffered events on a background thread.
+
+        Runs until :meth:`close` signals the stop event.
+        """
+        asyncio.set_event_loop(self._loop)
+        while not self._flush_stop.is_set():
+            self._flush_stop.wait(timeout=self.config.flush_interval_s)
+            if not self._flush_stop.is_set():
+                try:
+                    self._loop.run_until_complete(self._async_transport.flush())
+                except Exception:
+                    logger.warning(
+                        "Background flush failed", exc_info=True
+                    )
+
+    # ------------------------------------------------------------------
+    # Internal event processing
+    # ------------------------------------------------------------------
+
+    def _process_event(self, event: ExecutionEvent) -> GuardResult:
+        """Process an execution event according to the configured mode.
+
+        In sync mode, sends the event to the Verification Gateway for inline
+        verification and returns the server's response as a GuardResult.
+        If the verification call fails, logs a warning and returns a
+        pass-through result.
+
+        In async mode, enqueues the event for batched delivery and returns
+        a pass-through GuardResult immediately.
+        """
+        if self.config.mode == "sync" and self._sync_transport is not None:
+            try:
+                response = self._sync_transport.verify(event)
+                return GuardResult(
+                    output=response.get("output", event.output),
+                    confidence=response.get("confidence"),
+                    action=response.get("action", "pass"),
+                    corrections=response.get("corrections"),
+                    execution_id=response.get("execution_id", event.execution_id),
+                    verification=response.get("checks"),
+                )
+            except Exception:
+                logger.warning(
+                    "Sync verification failed for event %s; returning pass-through result",
+                    event.execution_id,
+                    exc_info=True,
+                )
+                return GuardResult(
+                    output=event.output,
+                    action="pass",
+                    execution_id=event.execution_id,
+                )
+
+        # Async mode: enqueue and return pass-through
+        self._async_transport.enqueue(event)
+        return GuardResult(
+            output=event.output,
+            action="pass",
+            execution_id=event.execution_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Public API: watch decorator
+    # ------------------------------------------------------------------
+
+    def watch(
+        self,
+        agent_id: str,
+        task: Optional[str] = None,
+    ) -> Callable:
+        """Decorator that wraps a function with AgentGuard telemetry.
+
+        Usage::
+
+            @guard.watch(agent_id="support-bot", task="Answer billing questions")
+            def handle_support(query: str) -> str:
+                return my_agent.run(query)
+
+            result = handle_support("billing question")
+            # result is a GuardResult with output, confidence, action, execution_id
+
+        Parameters
+        ----------
+        agent_id:
+            Identifier for the agent being monitored.
+        task:
+            Optional human-readable description of the agent's task.
+
+        Returns
+        -------
+        Callable
+            A decorator that wraps the target function.
+        """
+
+        def decorator(fn: Callable) -> Callable:
+            @functools.wraps(fn)
+            def wrapper(*args: Any, **kwargs: Any) -> GuardResult:
+                # Capture the input arguments
+                input_data: Any = args[0] if len(args) == 1 and not kwargs else {"args": args, "kwargs": kwargs}
+
+                start = time.monotonic()
+                output = fn(*args, **kwargs)
+                elapsed_ms = (time.monotonic() - start) * 1000.0
+
+                event = ExecutionEvent(
+                    agent_id=agent_id,
+                    task=task,
+                    input=input_data,
+                    output=output,
+                    latency_ms=elapsed_ms,
+                )
+
+                return self._process_event(event)
+
+            return wrapper
+
+        return decorator
+
+    # ------------------------------------------------------------------
+    # Public API: trace context manager
+    # ------------------------------------------------------------------
+
+    @contextmanager
+    def trace(
+        self,
+        agent_id: str,
+        task: Optional[str] = None,
+        input_data: Any = None,
+    ) -> Generator[TraceContext, None, None]:
+        """Context manager for fine-grained execution tracing.
+
+        Usage::
+
+            with guard.trace(agent_id="enricher", task="Enrich records") as trace:
+                output = my_agent.run(data)
+                trace.set_ground_truth(source_docs)
+                trace.set_schema(output_schema)
+                trace.record(output)
+            # trace.result is a GuardResult
+
+        Parameters
+        ----------
+        agent_id:
+            Identifier for the agent being traced.
+        task:
+            Optional human-readable description of the agent's task.
+        input_data:
+            Optional input data to record in the event.
+
+        Yields
+        ------
+        TraceContext
+            A context object for recording steps and the final output.
+        """
+        ctx = TraceContext(
+            guard=self,
+            agent_id=agent_id,
+            task=task,
+            input_data=input_data,
+        )
+        yield ctx
+        ctx._finalise()
+
+    # ------------------------------------------------------------------
+    # Public API: run explicit wrap
+    # ------------------------------------------------------------------
+
+    def run(
+        self,
+        agent_id: str,
+        fn: Callable,
+        task: Optional[str] = None,
+        ground_truth: Any = None,
+        schema: Optional[Dict[str, Any]] = None,
+        input_data: Any = None,
+    ) -> GuardResult:
+        """Execute a callable and wrap the result with AgentGuard processing.
+
+        This is a framework-agnostic escape hatch for cases where neither
+        the decorator nor the context manager is convenient.
+
+        Usage::
+
+            result = guard.run(
+                agent_id="report-gen",
+                task="Generate report",
+                fn=lambda: my_agent.run(query),
+                ground_truth=source_docs,
+                schema=report_schema,
+            )
+
+        Parameters
+        ----------
+        agent_id:
+            Identifier for the agent being monitored.
+        fn:
+            A zero-argument callable that produces the agent's output.
+        task:
+            Optional human-readable description of the agent's task.
+        ground_truth:
+            Optional reference data for verification.
+        schema:
+            Optional expected output schema.
+        input_data:
+            Optional input data to record in the event.
+
+        Returns
+        -------
+        GuardResult
+            The processed result containing output, confidence, and action.
+        """
+        start = time.monotonic()
+        output = fn()
+        elapsed_ms = (time.monotonic() - start) * 1000.0
+
+        event = ExecutionEvent(
+            agent_id=agent_id,
+            task=task,
+            input=input_data,
+            output=output,
+            latency_ms=elapsed_ms,
+            ground_truth=ground_truth,
+            schema_definition=schema,
+        )
+
+        return self._process_event(event)
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def close(self) -> None:
+        """Shut down the guard client, flushing any remaining events.
+
+        Stops the background flush thread, performs a final flush, and
+        closes both async and sync transports.  Safe to call multiple times.
+        """
+        if self._closed:
+            return
+        self._closed = True
+
+        # Signal the flush thread to stop
+        self._flush_stop.set()
+        self._flush_thread.join(timeout=5.0)
+
+        # Final flush of any remaining buffered events
+        try:
+            self._loop.run_until_complete(self._async_transport.close())
+        except Exception:
+            logger.warning("Error during final async transport close", exc_info=True)
+        finally:
+            self._loop.close()
+
+        # Close sync transport if it exists
+        if self._sync_transport is not None:
+            try:
+                self._sync_transport.close()
+            except Exception:
+                logger.warning("Error closing sync transport", exc_info=True)
+
+    def __del__(self) -> None:
+        """Best-effort cleanup if the user forgets to call close()."""
+        if not self._closed:
+            try:
+                self.close()
+            except Exception:
+                pass
