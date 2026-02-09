@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -28,29 +28,29 @@ class StepRecord(BaseModel):
     name: str
     input: Any = None
     output: Any = None
-    duration_ms: float | None = None
+    duration_ms: Optional[float] = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ExecutionEvent(BaseModel):
     execution_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     agent_id: str
-    task: str | None = None
+    task: Optional[str] = None
     input: Any
     output: Any
-    steps: list[StepRecord] = Field(default_factory=list)
-    token_count: int | None = None
-    latency_ms: float | None = None
+    steps: List[StepRecord] = Field(default_factory=list)
+    token_count: Optional[int] = None
+    latency_ms: Optional[float] = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ground_truth: Any = None
-    schema_definition: dict | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    schema_definition: Optional[Dict[str, Any]] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class GuardResult(BaseModel):
     output: Any
-    confidence: float | None = None
+    confidence: Optional[float] = None
     action: str = "pass"  # "pass" | "flag" | "block"
-    corrections: list[dict] | None = None
+    corrections: Optional[List[Dict[str, Any]]] = None
     execution_id: str
-    verification: dict | None = None
+    verification: Optional[Dict[str, Any]] = None
