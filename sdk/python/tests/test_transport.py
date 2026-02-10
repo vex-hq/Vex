@@ -53,6 +53,12 @@ async def test_transport_flush_sends_batch(transport):
 
     assert route.called
     assert len(transport._buffer) == 0
+    # Verify payload wraps events in {"events": [...]} to match API contract
+    import json as _json
+    request_body = _json.loads(route.calls.last.request.content)
+    assert "events" in request_body
+    assert isinstance(request_body["events"], list)
+    assert len(request_body["events"]) == 3
 
 
 @respx.mock

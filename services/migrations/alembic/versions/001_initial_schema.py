@@ -237,9 +237,9 @@ def upgrade() -> None:
     op.execute(
         """
         SELECT add_continuous_aggregate_policy('agent_health_hourly',
-            start_offset    => INTERVAL '2 hours',
-            end_offset      => INTERVAL '1 minute',
-            schedule_interval => INTERVAL '1 minute'
+            start_offset    => INTERVAL '3 hours',
+            end_offset      => INTERVAL '1 hour',
+            schedule_interval => INTERVAL '1 hour'
         );
         """
     )

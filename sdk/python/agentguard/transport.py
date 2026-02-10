@@ -117,7 +117,7 @@ class AsyncTransport:
 
         try:
             client = self._get_client()
-            response = await client.post(url, json=payload)
+            response = await client.post(url, json={"events": payload})
             response.raise_for_status()
             logger.debug(
                 "Flushed %d events to %s (status %d)",
