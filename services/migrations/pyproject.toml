@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentguard-migrations"
+version = "0.1.0"
+description = "Database migrations for AgentGuard"
+requires-python = ">=3.9"
+dependencies = [
+    "alembic>=1.12.0",
+    "psycopg2-binary>=2.9.0",
+    "sqlalchemy>=2.0.0",
+]
