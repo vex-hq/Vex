@@ -23,6 +23,19 @@ class ThresholdConfig(BaseModel):
         return self
 
 
+class ConversationTurn(BaseModel):
+    """A single turn in a multi-turn conversation.
+
+    Used by Session to accumulate conversation history for cross-turn
+    verification (hallucination, drift, coherence).
+    """
+
+    sequence_number: int
+    input: Any = None
+    output: Any = None
+    task: Optional[str] = None
+
+
 class StepRecord(BaseModel):
     step_type: str  # "tool_call", "llm", "custom"
     name: str
@@ -48,6 +61,7 @@ class ExecutionEvent(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ground_truth: Any = None
     schema_definition: Optional[Dict[str, Any]] = None
+    conversation_history: Optional[List[ConversationTurn]] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -58,3 +72,5 @@ class GuardResult(BaseModel):
     corrections: Optional[List[Dict[str, Any]]] = None
     execution_id: str
     verification: Optional[Dict[str, Any]] = None
+    corrected: bool = False
+    original_output: Optional[Any] = None
