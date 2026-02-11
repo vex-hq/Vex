@@ -17,6 +17,7 @@ import functools
 import logging
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Generator, List, Optional
 
@@ -25,6 +26,72 @@ from agentguard.models import ExecutionEvent, GuardResult, StepRecord
 from agentguard.transport import AsyncTransport, SyncTransport
 
 logger = logging.getLogger(__name__)
+
+
+class Session:
+    """Groups multiple trace executions into a logical session.
+
+    Automatically assigns a shared session_id and auto-incrementing
+    sequence_number to each trace created through this session.
+
+    Usage::
+
+        session = guard.session(agent_id="chat-bot")
+        with session.trace(task="turn 1", input_data=msg) as ctx:
+            ctx.record(response)
+        # session.sequence is now 1
+    """
+
+    def __init__(
+        self,
+        guard: "AgentGuard",
+        agent_id: str,
+        session_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._guard = guard
+        self._agent_id = agent_id
+        self.session_id: str = session_id or str(uuid.uuid4())
+        self._metadata: Dict[str, Any] = metadata or {}
+        self._sequence: int = 0
+        self._lock = threading.Lock()
+
+    @property
+    def sequence(self) -> int:
+        """Current sequence number (incremented after each trace)."""
+        return self._sequence
+
+    @contextmanager
+    def trace(
+        self,
+        task: Optional[str] = None,
+        input_data: Any = None,
+        parent_execution_id: Optional[str] = None,
+    ) -> Generator["TraceContext", None, None]:
+        """Create a traced execution within this session.
+
+        Automatically injects session_id and sequence_number.
+        Thread-safe: sequence allocation is protected by a lock.
+        """
+        with self._lock:
+            seq = self._sequence
+        ctx = TraceContext(
+            guard=self._guard,
+            agent_id=self._agent_id,
+            task=task,
+            input_data=input_data,
+            session_id=self.session_id,
+            sequence_number=seq,
+            parent_execution_id=parent_execution_id,
+        )
+        # Merge session-level metadata (trace-level overrides take precedence)
+        for key, value in self._metadata.items():
+            if key not in ctx._metadata:
+                ctx._metadata[key] = value
+        yield ctx
+        ctx._finalise()
+        with self._lock:
+            self._sequence += 1
 
 
 class TraceContext:
@@ -52,6 +119,9 @@ class TraceContext:
         agent_id: str,
         task: Optional[str] = None,
         input_data: Any = None,
+        session_id: Optional[str] = None,
+        sequence_number: Optional[int] = None,
+        parent_execution_id: Optional[str] = None,
     ) -> None:
         self._guard = guard
         self._agent_id = agent_id
@@ -63,6 +133,11 @@ class TraceContext:
         self._steps: List[StepRecord] = []
         self._start_time: float = time.monotonic()
         self._metadata: Dict[str, Any] = {}
+        self._token_count: Optional[int] = None
+        self._cost_estimate: Optional[float] = None
+        self._session_id = session_id
+        self._sequence_number = sequence_number
+        self._parent_execution_id = parent_execution_id
         self.result: Optional[GuardResult] = None
 
     def set_ground_truth(self, data: Any) -> None:
@@ -72,6 +147,18 @@ class TraceContext:
     def set_schema(self, schema: Dict[str, Any]) -> None:
         """Set the expected output schema for validation."""
         self._schema = schema
+
+    def set_token_count(self, count: int) -> None:
+        """Set the total token count for this execution."""
+        self._token_count = count
+
+    def set_cost_estimate(self, cost: float) -> None:
+        """Set the estimated cost for this execution."""
+        self._cost_estimate = cost
+
+    def set_metadata(self, key: str, value: Any) -> None:
+        """Set a custom metadata key-value pair for this execution."""
+        self._metadata[key] = value
 
     def step(
         self,
@@ -116,10 +203,15 @@ class TraceContext:
 
         event = ExecutionEvent(
             agent_id=self._agent_id,
+            session_id=self._session_id,
+            parent_execution_id=self._parent_execution_id,
+            sequence_number=self._sequence_number,
             task=self._task,
             input=self._input_data,
             output=self._output,
             steps=self._steps,
+            token_count=self._token_count,
+            cost_estimate=self._cost_estimate,
             latency_ms=elapsed_ms,
             ground_truth=self._ground_truth,
             schema_definition=self._schema,
@@ -419,6 +511,31 @@ class AgentGuard:
         )
 
         return self._process_event(event)
+
+    # ------------------------------------------------------------------
+    # Public API: session grouping
+    # ------------------------------------------------------------------
+
+    def session(
+        self,
+        agent_id: str,
+        session_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Session:
+        """Create a session for grouping related executions.
+
+        Usage::
+
+            session = guard.session(agent_id="chat-bot")
+            with session.trace(task="turn 1") as ctx:
+                ctx.record(output)
+        """
+        return Session(
+            guard=self,
+            agent_id=agent_id,
+            session_id=session_id,
+            metadata=metadata,
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle

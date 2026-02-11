@@ -62,6 +62,44 @@ def test_execution_event_auto_generates_execution_id():
     assert event1.execution_id != event2.execution_id
 
 
+def test_execution_event_with_cost_estimate():
+    event = ExecutionEvent(
+        agent_id="billing-bot",
+        input={"query": "invoice"},
+        output={"response": "Here is your invoice"},
+        token_count=450,
+        cost_estimate=0.0009,
+    )
+    assert event.token_count == 450
+    assert event.cost_estimate == 0.0009
+
+
+def test_execution_event_cost_estimate_defaults_none():
+    event = ExecutionEvent(agent_id="a", input={}, output={})
+    assert event.cost_estimate is None
+
+
+def test_execution_event_session_fields():
+    event = ExecutionEvent(
+        agent_id="a",
+        input="x",
+        output="y",
+        session_id="sess-1",
+        parent_execution_id="parent-1",
+        sequence_number=3,
+    )
+    assert event.session_id == "sess-1"
+    assert event.parent_execution_id == "parent-1"
+    assert event.sequence_number == 3
+
+
+def test_execution_event_session_fields_default_none():
+    event = ExecutionEvent(agent_id="a", input="x", output="y")
+    assert event.session_id is None
+    assert event.parent_execution_id is None
+    assert event.sequence_number is None
+
+
 def test_guard_result_creation():
     result = GuardResult(
         output={"response": "answer"},

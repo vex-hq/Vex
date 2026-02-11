@@ -34,12 +34,16 @@ class StepRecord(BaseModel):
 
 class ExecutionEvent(BaseModel):
     execution_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    session_id: Optional[str] = None
+    parent_execution_id: Optional[str] = None
+    sequence_number: Optional[int] = None
     agent_id: str
     task: Optional[str] = None
     input: Any
     output: Any
     steps: List[StepRecord] = Field(default_factory=list)
     token_count: Optional[int] = None
+    cost_estimate: Optional[float] = None
     latency_ms: Optional[float] = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ground_truth: Any = None
