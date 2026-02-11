@@ -160,10 +160,9 @@ async def verify_with_correction(
     if result.action == "pass":
         return result, False, output, []
 
-    # Correction cascade
+    # Correction cascade — always correct from original output
     layer = select_layer(result)
     attempts: List[CorrectionAttempt] = []
-    current_output = output
     current_result = result
 
     for _ in range(MAX_CORRECTION_ATTEMPTS):
@@ -172,7 +171,7 @@ async def verify_with_correction(
 
         attempt = await run_correction(
             layer=layer,
-            output=current_output,
+            output=output,
             task=task,
             checks=current_result.checks,
             schema=schema,
@@ -207,13 +206,12 @@ async def verify_with_correction(
         if re_result.action == "pass":
             return re_result, True, attempt.corrected_output, attempts
 
-        # Escalate
-        current_output = attempt.corrected_output
+        # Escalate — always correct from original output, not prior attempt
         current_result = re_result
         layer += 1
 
     # All attempts exhausted — return the last verification result
-    return current_result, False, current_output, attempts
+    return current_result, False, output, attempts
 
 
 async def main():
