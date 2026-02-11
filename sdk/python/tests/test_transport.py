@@ -213,3 +213,99 @@ def test_sync_transport_sends_api_key_header():
     request = route.calls.last.request
     assert request.headers["X-AgentGuard-Key"] == "ag_test_key"
     transport.close()
+
+
+# --- SyncTransport correction tests ---
+
+
+@respx.mock
+def test_sync_transport_verify_forwards_correction_metadata():
+    """verify() should include correction and transparency in metadata."""
+    import json as _json
+    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-123", "confidence": 0.9, "action": "pass",
+            "output": "corrected", "checks": {}, "corrected": True,
+        })
+    )
+    transport = SyncTransport(
+        api_url="https://api.agentguard.dev",
+        api_key="ag_test_key",
+    )
+    event = ExecutionEvent(agent_id="test", input={}, output={})
+    transport.verify(event, correction="cascade", transparency="transparent")
+
+    body = _json.loads(route.calls.last.request.content)
+    assert body["metadata"]["correction"] == "cascade"
+    assert body["metadata"]["transparency"] == "transparent"
+    transport.close()
+
+
+@respx.mock
+def test_sync_transport_correction_client_uses_longer_timeout():
+    """When correction=cascade, should use correction timeout client (12s)."""
+    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "e", "confidence": 0.9, "action": "pass",
+            "output": "ok", "checks": {},
+        })
+    )
+    transport = SyncTransport(
+        api_url="https://api.agentguard.dev",
+        api_key="ag_test_key",
+        timeout_s=2.0,
+        correction_timeout_s=12.0,
+    )
+    event = ExecutionEvent(agent_id="test", input={}, output={})
+    transport.verify(event, correction="cascade")
+
+    # Verify the correction client was used (has 12s timeout)
+    assert transport._correction_client is not None
+    assert transport._correction_client.timeout.connect == 12.0
+    transport.close()
+
+
+@respx.mock
+def test_sync_transport_default_client_for_no_correction():
+    """When correction=none, should use default client (2s timeout)."""
+    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "e", "confidence": 0.9, "action": "pass",
+            "output": "ok", "checks": {},
+        })
+    )
+    transport = SyncTransport(
+        api_url="https://api.agentguard.dev",
+        api_key="ag_test_key",
+        timeout_s=2.0,
+        correction_timeout_s=12.0,
+    )
+    event = ExecutionEvent(agent_id="test", input={}, output={})
+    transport.verify(event, correction="none")
+
+    # Correction client should NOT have been created
+    assert transport._correction_client is None
+    transport.close()
+
+
+@respx.mock
+def test_sync_transport_close_closes_both_clients():
+    """close() should close both default and correction clients."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "e", "confidence": 0.9, "action": "pass",
+            "output": "ok", "checks": {},
+        })
+    )
+    transport = SyncTransport(
+        api_url="https://api.agentguard.dev",
+        api_key="ag_test_key",
+    )
+    event = ExecutionEvent(agent_id="test", input={}, output={})
+    # Trigger correction client creation
+    transport.verify(event, correction="cascade")
+    assert transport._correction_client is not None
+
+    transport.close()
+    assert transport._client.is_closed
+    assert transport._correction_client.is_closed

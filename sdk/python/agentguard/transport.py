@@ -18,7 +18,7 @@ from typing import Dict, List, Optional
 
 import httpx
 
-from agentguard.models import ExecutionEvent
+from agentguard.models import ExecutionEvent, ThresholdConfig
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,15 @@ class AsyncTransport:
 class SyncTransport:
     """Synchronous transport that sends a single event to the Verification Gateway.
 
+    Maintains two HTTP clients with different timeouts:
+
+    - A *default* client (``timeout_s``, default 2 s) used for normal
+      verification requests.
+    - A *correction* client (``correction_timeout_s``, default 12 s) used when
+      the caller requests server-side correction (``correction != "none"``).
+      The longer timeout accounts for the correction loop which can take up to
+      10 s on the gateway side.  This client is created lazily on first use.
+
     Parameters
     ----------
     api_url:
@@ -153,7 +162,9 @@ class SyncTransport:
     api_key:
         API key sent via the ``X-AgentGuard-Key`` header.
     timeout_s:
-        HTTP request timeout in seconds.
+        HTTP request timeout in seconds for normal verification.
+    correction_timeout_s:
+        HTTP request timeout in seconds for correction-enabled verification.
     """
 
     def __init__(
@@ -161,34 +172,96 @@ class SyncTransport:
         api_url: str,
         api_key: str,
         timeout_s: float = 2.0,
+        correction_timeout_s: float = 12.0,
     ) -> None:
         self.api_url: str = api_url.rstrip("/")
         self.api_key: str = api_key
         self.timeout_s: float = timeout_s
+        self.correction_timeout_s: float = correction_timeout_s
 
         self._client: httpx.Client = httpx.Client(
             timeout=self.timeout_s,
             headers={"X-AgentGuard-Key": self.api_key},
         )
+        self._correction_client: Optional[httpx.Client] = None
+
+    # ------------------------------------------------------------------
+    # Lazy correction client
+    # ------------------------------------------------------------------
+
+    def _get_correction_client(self) -> httpx.Client:
+        """Return the correction client with longer timeout, creating on first use."""
+        if self._correction_client is None or self._correction_client.is_closed:
+            self._correction_client = httpx.Client(
+                timeout=self.correction_timeout_s,
+                headers={"X-AgentGuard-Key": self.api_key},
+            )
+        return self._correction_client
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def verify(self, event: ExecutionEvent) -> Dict[str, object]:
+    def verify(
+        self,
+        event: ExecutionEvent,
+        thresholds: Optional[ThresholdConfig] = None,
+        correction: str = "none",
+        transparency: str = "opaque",
+    ) -> Dict[str, object]:
         """POST the event to ``/v1/verify`` and return the parsed JSON response.
+
+        Includes threshold configuration in the request metadata so the
+        gateway can use the caller's threshold settings.
+
+        When *correction* is not ``"none"``, the request is sent via a
+        dedicated HTTP client with a longer timeout
+        (``correction_timeout_s``) to accommodate the server-side correction
+        loop.  The *correction* and *transparency* values are forwarded in
+        the payload metadata.
+
+        Parameters
+        ----------
+        event:
+            The execution event to verify.
+        thresholds:
+            Optional threshold overrides for pass/flag decisions.
+        correction:
+            Correction mode (``"none"``, ``"cascade"``, etc.).
+        transparency:
+            Transparency mode (``"opaque"``, ``"transparent"``).
 
         Raises ``httpx.HTTPStatusError`` if the server returns a non-2xx
         status code.
         """
         url = f"{self.api_url}/v1/verify"
         payload = event.model_dump(mode="json")
-        response = self._client.post(url, json=payload)
+
+        if thresholds is not None:
+            if "metadata" not in payload or payload["metadata"] is None:
+                payload["metadata"] = {}
+            payload["metadata"]["thresholds"] = {
+                "pass_threshold": thresholds.pass_threshold,
+                "flag_threshold": thresholds.flag_threshold,
+            }
+
+        if correction != "none":
+            if "metadata" not in payload or payload["metadata"] is None:
+                payload["metadata"] = {}
+            payload["metadata"]["correction"] = correction
+            payload["metadata"]["transparency"] = transparency
+
+        # Select the appropriate client based on correction mode
+        client = self._get_correction_client() if correction != "none" else self._client
+
+        response = client.post(url, json=payload)
         response.raise_for_status()
         result: Dict[str, object] = response.json()
         return result
 
     def close(self) -> None:
-        """Close the underlying HTTP client."""
+        """Close the underlying HTTP clients."""
         if not self._client.is_closed:
             self._client.close()
+        if self._correction_client is not None and not self._correction_client.is_closed:
+            self._correction_client.close()
