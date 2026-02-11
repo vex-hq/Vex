@@ -1,12 +1,13 @@
 """Tests for the AgentGuard client: watch decorator, trace context manager, run wrapper."""
 
 import time
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 import respx
 
-from agentguard import AgentGuard, GuardConfig, GuardResult
+from agentguard import AgentGuard, AgentGuardBlockError, ConversationTurn, GuardConfig, GuardResult
 from agentguard.models import ThresholdConfig
 
 
@@ -373,3 +374,500 @@ def test_guard_close_is_idempotent():
     )
     guard.close()
     guard.close()  # should not raise
+
+
+@respx.mock
+def test_guard_sync_mode_block_raises():
+    """When sync verify returns action=block, should raise AgentGuardBlockError."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-block",
+            "confidence": 0.2,
+            "action": "block",
+            "output": "blocked output",
+            "corrections": None,
+            "checks": {},
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+        ),
+    )
+
+    @guard.watch(agent_id="critical-bot", task="critical task")
+    def critical_agent(query: str) -> str:
+        return "raw answer"
+
+    with pytest.raises(AgentGuardBlockError) as exc_info:
+        critical_agent("test")
+
+    assert exc_info.value.result.action == "block"
+    assert exc_info.value.result.confidence == 0.2
+    guard.close()
+
+
+@respx.mock
+def test_guard_sync_mode_flag_returns_normally():
+    """When sync verify returns action=flag, should log warning and return normally."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-flag",
+            "confidence": 0.6,
+            "action": "flag",
+            "output": "flagged output",
+            "corrections": None,
+            "checks": {},
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+        ),
+    )
+
+    @guard.watch(agent_id="critical-bot", task="critical task")
+    def critical_agent(query: str) -> str:
+        return "raw answer"
+
+    result = critical_agent("test")
+    assert result.action == "flag"
+    assert result.confidence == 0.6
+    guard.close()
+
+
+@respx.mock
+def test_guard_sync_mode_pass_returns_normally():
+    """When sync verify returns action=pass, should return normally."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-pass",
+            "confidence": 0.95,
+            "action": "pass",
+            "output": "good output",
+            "corrections": None,
+            "checks": {},
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+        ),
+    )
+
+    @guard.watch(agent_id="critical-bot", task="critical task")
+    def critical_agent(query: str) -> str:
+        return "raw answer"
+
+    result = critical_agent("test")
+    assert result.action == "pass"
+    assert result.confidence == 0.95
+    guard.close()
+
+
+@respx.mock
+def test_guard_sync_mode_threshold_config_sent():
+    """Verify that threshold config is included in verify request payload."""
+    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-thresh",
+            "confidence": 0.9,
+            "action": "pass",
+            "output": "answer",
+            "corrections": None,
+            "checks": {},
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+            confidence_threshold=ThresholdConfig(
+                pass_threshold=0.9,
+                flag_threshold=0.6,
+                block_threshold=0.3,
+            ),
+        ),
+    )
+
+    @guard.watch(agent_id="thresh-bot", task="threshold test")
+    def my_agent(query: str) -> str:
+        return "answer"
+
+    my_agent("test")
+
+    # Check that the request payload includes thresholds in metadata
+    request = route.calls[0].request
+    import json
+    body = json.loads(request.content)
+    assert "metadata" in body
+    assert "thresholds" in body["metadata"]
+    assert body["metadata"]["thresholds"]["pass_threshold"] == 0.9
+    assert body["metadata"]["thresholds"]["flag_threshold"] == 0.6
+    guard.close()
+
+
+@respx.mock
+def test_guard_async_mode_never_raises_block():
+    """Async mode should never raise AgentGuardBlockError — events are fire-and-forget."""
+    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+        return_value=httpx.Response(202, json={"accepted": 1})
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="async",
+            api_url="https://api.agentguard.dev",
+        ),
+    )
+
+    @guard.watch(agent_id="async-bot", task="async task")
+    def my_agent(query: str) -> str:
+        return "answer"
+
+    # Should never raise, always returns pass
+    result = my_agent("test")
+    assert result.action == "pass"
+    guard.close()
+
+
+@respx.mock
+def test_guard_sync_trace_block_raises():
+    """trace() in sync mode should also raise on block."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-trace-block",
+            "confidence": 0.1,
+            "action": "block",
+            "output": "blocked",
+            "corrections": None,
+            "checks": {},
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+        ),
+    )
+
+    with pytest.raises(AgentGuardBlockError):
+        with guard.trace(agent_id="trace-bot", task="trace task") as trace:
+            trace.record("bad output")
+
+    guard.close()
+
+
+# --- Conversation history accumulation tests ---
+
+
+def test_session_accumulates_history_after_three_turns(guard):
+    """Session should accumulate conversation turns in _history."""
+    session = guard.session(agent_id="chat-bot")
+
+    with session.trace(task="turn 0", input_data="q0") as ctx:
+        ctx.record("a0")
+    with session.trace(task="turn 1", input_data="q1") as ctx:
+        ctx.record("a1")
+    with session.trace(task="turn 2", input_data="q2") as ctx:
+        ctx.record("a2")
+
+    assert len(session._history) == 3
+    assert session._history[0].sequence_number == 0
+    assert session._history[0].input == "q0"
+    assert session._history[0].output == "a0"
+    assert session._history[0].task == "turn 0"
+    assert session._history[1].sequence_number == 1
+    assert session._history[2].sequence_number == 2
+
+
+def test_session_window_size_limits_history():
+    """Window size should limit the number of turns kept in _history."""
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="async",
+            api_url="https://api.agentguard.dev",
+            conversation_window_size=2,
+        ),
+    )
+
+    session = guard.session(agent_id="chat-bot")
+
+    for i in range(5):
+        with session.trace(task=f"turn {i}", input_data=f"q{i}") as ctx:
+            ctx.record(f"a{i}")
+
+    # Only last 2 turns should be kept
+    assert len(session._history) == 2
+    assert session._history[0].sequence_number == 3
+    assert session._history[1].sequence_number == 4
+    guard.close()
+
+
+def test_non_session_trace_has_none_history(guard):
+    """Non-session traces (guard.trace) should have None conversation_history."""
+    with guard.trace(agent_id="one-shot", task="task") as ctx:
+        ctx.record("output")
+
+    assert ctx._conversation_history is None
+
+
+def test_session_history_snapshot_excludes_current_turn(guard):
+    """The history snapshot passed to TraceContext should NOT include the current turn."""
+    session = guard.session(agent_id="chat-bot")
+
+    # Turn 0: no history yet
+    with session.trace(task="turn 0", input_data="q0") as ctx0:
+        ctx0.record("a0")
+    assert ctx0._conversation_history is None  # No prior turns
+
+    # Turn 1: should have turn 0 in history
+    with session.trace(task="turn 1", input_data="q1") as ctx1:
+        ctx1.record("a1")
+    assert ctx1._conversation_history is not None
+    assert len(ctx1._conversation_history) == 1
+    assert ctx1._conversation_history[0].sequence_number == 0
+    assert ctx1._conversation_history[0].output == "a0"
+
+    # Turn 2: should have turns 0 and 1
+    with session.trace(task="turn 2", input_data="q2") as ctx2:
+        ctx2.record("a2")
+    assert ctx2._conversation_history is not None
+    assert len(ctx2._conversation_history) == 2
+
+
+def test_session_turn_data_correctness(guard):
+    """Each ConversationTurn should capture the correct sequence_number, input, output, task."""
+    session = guard.session(agent_id="chat-bot")
+
+    with session.trace(task="financial Q&A", input_data="What is revenue?") as ctx:
+        ctx.record("Revenue is $5.2B.")
+
+    turn = session._history[0]
+    assert turn.sequence_number == 0
+    assert turn.input == "What is revenue?"
+    assert turn.output == "Revenue is $5.2B."
+    assert turn.task == "financial Q&A"
+
+
+# --- Correction integration tests ---
+
+
+@respx.mock
+def test_guard_sync_correction_returns_corrected_output():
+    """When server returns corrected=True, GuardResult should reflect corrected output."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-corrected",
+            "confidence": 0.9,
+            "action": "pass",
+            "output": "corrected answer",
+            "checks": {},
+            "corrected": True,
+            "original_output": "bad answer",
+            "correction_attempts": [
+                {"layer": 1, "layer_name": "repair", "success": True, "latency_ms": 300},
+            ],
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+            correction="cascade",
+        ),
+    )
+
+    @guard.watch(agent_id="bot", task="task")
+    def my_agent(q: str) -> str:
+        return "bad answer"
+
+    result = my_agent("test")
+    assert result.output == "corrected answer"
+    assert result.corrected is True
+    assert result.action == "pass"
+    guard.close()
+
+
+@respx.mock
+def test_guard_sync_correction_opaque_hides_details():
+    """Opaque mode: original_output and corrections should be None."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-opaque",
+            "confidence": 0.9,
+            "action": "pass",
+            "output": "corrected",
+            "checks": {},
+            "corrected": True,
+            "original_output": None,
+            "correction_attempts": None,
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+            correction="cascade",
+            transparency="opaque",
+        ),
+    )
+
+    @guard.watch(agent_id="bot", task="task")
+    def my_agent(q: str) -> str:
+        return "bad"
+
+    result = my_agent("test")
+    assert result.corrected is True
+    assert result.original_output is None
+    assert result.corrections is None
+    guard.close()
+
+
+@respx.mock
+def test_guard_sync_correction_transparent_shows_details():
+    """Transparent mode: original_output and corrections should be populated."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-transparent",
+            "confidence": 0.9,
+            "action": "pass",
+            "output": "corrected",
+            "checks": {},
+            "corrected": True,
+            "original_output": "bad output",
+            "correction_attempts": [
+                {"layer": 1, "layer_name": "repair", "success": True},
+            ],
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+            correction="cascade",
+            transparency="transparent",
+        ),
+    )
+
+    @guard.watch(agent_id="bot", task="task")
+    def my_agent(q: str) -> str:
+        return "bad"
+
+    result = my_agent("test")
+    assert result.corrected is True
+    assert result.original_output == "bad output"
+    assert result.corrections is not None
+    assert len(result.corrections) == 1
+    guard.close()
+
+
+@respx.mock
+def test_guard_sync_correction_failed_raises_block():
+    """When correction fails (all attempts exhausted), should raise AgentGuardBlockError."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-block",
+            "confidence": 0.2,
+            "action": "block",
+            "output": "bad output",
+            "checks": {},
+            "corrected": False,
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+            correction="cascade",
+        ),
+    )
+
+    @guard.watch(agent_id="bot", task="task")
+    def my_agent(q: str) -> str:
+        return "bad"
+
+    with pytest.raises(AgentGuardBlockError):
+        my_agent("test")
+    guard.close()
+
+
+@respx.mock
+def test_guard_async_mode_ignores_correction():
+    """Async mode should ignore correction setting -- fire-and-forget."""
+    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+        return_value=httpx.Response(202, json={"accepted": 1})
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="async",
+            api_url="https://api.agentguard.dev",
+            correction="cascade",
+        ),
+    )
+
+    @guard.watch(agent_id="bot", task="task")
+    def my_agent(q: str) -> str:
+        return "answer"
+
+    result = my_agent("test")
+    assert result.action == "pass"
+    assert result.corrected is False
+    guard.close()
+
+
+@respx.mock
+def test_guard_sync_no_correction_unchanged():
+    """correction=none -> existing behavior, no correction fields."""
+    respx.post("https://api.agentguard.dev/v1/verify").mock(
+        return_value=httpx.Response(200, json={
+            "execution_id": "exec-none",
+            "confidence": 0.6,
+            "action": "flag",
+            "output": "flagged",
+            "checks": {},
+        })
+    )
+
+    guard = AgentGuard(
+        api_key="ag_test_key",
+        config=GuardConfig(
+            mode="sync",
+            api_url="https://api.agentguard.dev",
+            correction="none",
+        ),
+    )
+
+    @guard.watch(agent_id="bot", task="task")
+    def my_agent(q: str) -> str:
+        return "answer"
+
+    result = my_agent("test")
+    assert result.action == "flag"
+    assert result.corrected is False
+    guard.close()

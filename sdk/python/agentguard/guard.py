@@ -22,7 +22,8 @@ from contextlib import contextmanager
 from typing import Any, Callable, Dict, Generator, List, Optional
 
 from agentguard.config import GuardConfig
-from agentguard.models import ExecutionEvent, GuardResult, StepRecord
+from agentguard.exceptions import AgentGuardBlockError
+from agentguard.models import ConversationTurn, ExecutionEvent, GuardResult, StepRecord
 from agentguard.transport import AsyncTransport, SyncTransport
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,8 @@ class Session:
         self._metadata: Dict[str, Any] = metadata or {}
         self._sequence: int = 0
         self._lock = threading.Lock()
+        self._history: List[ConversationTurn] = []
+        self._window_size: int = guard.config.conversation_window_size
 
     @property
     def sequence(self) -> int:
@@ -70,11 +73,16 @@ class Session:
     ) -> Generator["TraceContext", None, None]:
         """Create a traced execution within this session.
 
-        Automatically injects session_id and sequence_number.
-        Thread-safe: sequence allocation is protected by a lock.
+        Automatically injects session_id, sequence_number, and a snapshot
+        of the conversation history (excluding the current turn).
+        Thread-safe: sequence/history access is protected by a lock.
         """
         with self._lock:
             seq = self._sequence
+            # Snapshot history BEFORE this turn (excludes current turn)
+            history_snapshot: Optional[List[ConversationTurn]] = (
+                list(self._history[-self._window_size:]) if self._history else None
+            )
         ctx = TraceContext(
             guard=self._guard,
             agent_id=self._agent_id,
@@ -83,6 +91,7 @@ class Session:
             session_id=self.session_id,
             sequence_number=seq,
             parent_execution_id=parent_execution_id,
+            conversation_history=history_snapshot,
         )
         # Merge session-level metadata (trace-level overrides take precedence)
         for key, value in self._metadata.items():
@@ -92,6 +101,14 @@ class Session:
         ctx._finalise()
         with self._lock:
             self._sequence += 1
+            self._history.append(ConversationTurn(
+                sequence_number=seq,
+                input=input_data,
+                output=ctx._output,
+                task=task,
+            ))
+            if len(self._history) > self._window_size:
+                self._history = self._history[-self._window_size:]
 
 
 class TraceContext:
@@ -122,6 +139,7 @@ class TraceContext:
         session_id: Optional[str] = None,
         sequence_number: Optional[int] = None,
         parent_execution_id: Optional[str] = None,
+        conversation_history: Optional[List[ConversationTurn]] = None,
     ) -> None:
         self._guard = guard
         self._agent_id = agent_id
@@ -138,6 +156,7 @@ class TraceContext:
         self._session_id = session_id
         self._sequence_number = sequence_number
         self._parent_execution_id = parent_execution_id
+        self._conversation_history = conversation_history
         self.result: Optional[GuardResult] = None
 
     def set_ground_truth(self, data: Any) -> None:
@@ -215,6 +234,7 @@ class TraceContext:
             latency_ms=elapsed_ms,
             ground_truth=self._ground_truth,
             schema_definition=self._schema,
+            conversation_history=self._conversation_history,
             metadata=self._metadata,
         )
 
@@ -267,6 +287,7 @@ class AgentGuard:
                 api_url=self.config.api_url,
                 api_key=self.api_key,
                 timeout_s=self.config.timeout_s,
+                correction_timeout_s=12.0,
             )
 
         # Background event loop for async flushing
@@ -317,15 +338,36 @@ class AgentGuard:
         """
         if self.config.mode == "sync" and self._sync_transport is not None:
             try:
-                response = self._sync_transport.verify(event)
-                return GuardResult(
+                response = self._sync_transport.verify(
+                    event,
+                    thresholds=self.config.confidence_threshold,
+                    correction=self.config.correction,
+                    transparency=self.config.transparency,
+                )
+                result = GuardResult(
                     output=response.get("output", event.output),
                     confidence=response.get("confidence"),
                     action=response.get("action", "pass"),
-                    corrections=response.get("corrections"),
+                    corrections=response.get("correction_attempts"),
                     execution_id=response.get("execution_id", event.execution_id),
                     verification=response.get("checks"),
+                    corrected=response.get("corrected", False),
+                    original_output=response.get("original_output"),
                 )
+
+                if result.action == "block":
+                    raise AgentGuardBlockError(result)
+
+                if result.action == "flag":
+                    logger.warning(
+                        "Agent output flagged for event %s (confidence=%s)",
+                        event.execution_id,
+                        result.confidence,
+                    )
+
+                return result
+            except AgentGuardBlockError:
+                raise
             except Exception:
                 logger.warning(
                     "Sync verification failed for event %s; returning pass-through result",

@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from agentguard.models import (
+    ConversationTurn,
     ExecutionEvent,
     GuardResult,
     StepRecord,
@@ -100,6 +101,40 @@ def test_execution_event_session_fields_default_none():
     assert event.sequence_number is None
 
 
+def test_conversation_turn_model():
+    turn = ConversationTurn(
+        sequence_number=0,
+        input="What is revenue?",
+        output="Revenue is $5.2B.",
+        task="financial Q&A",
+    )
+    assert turn.sequence_number == 0
+    assert turn.input == "What is revenue?"
+    assert turn.output == "Revenue is $5.2B."
+    assert turn.task == "financial Q&A"
+
+
+def test_execution_event_with_conversation_history():
+    history = [
+        ConversationTurn(sequence_number=0, input="hi", output="hello"),
+        ConversationTurn(sequence_number=1, input="q", output="a"),
+    ]
+    event = ExecutionEvent(
+        agent_id="bot",
+        input="next",
+        output="reply",
+        conversation_history=history,
+    )
+    assert event.conversation_history is not None
+    assert len(event.conversation_history) == 2
+    assert event.conversation_history[0].sequence_number == 0
+
+
+def test_execution_event_backward_compat_without_history():
+    event = ExecutionEvent(agent_id="bot", input="x", output="y")
+    assert event.conversation_history is None
+
+
 def test_guard_result_creation():
     result = GuardResult(
         output={"response": "answer"},
@@ -121,3 +156,31 @@ def test_guard_result_with_corrections():
         corrections=[{"layer": 1, "action": "repair"}],
     )
     assert len(result.corrections) == 1
+
+
+# --- Correction fields on GuardResult ---
+
+
+def test_guard_result_with_correction_fields():
+    from agentguard.models import GuardResult
+    result = GuardResult(
+        output="corrected output",
+        confidence=0.9,
+        action="pass",
+        execution_id="exec-123",
+        corrected=True,
+        original_output="bad output",
+        corrections=[{"layer": 1, "success": True}],
+    )
+    assert result.corrected is True
+    assert result.original_output == "bad output"
+
+
+def test_guard_result_backward_compat():
+    from agentguard.models import GuardResult
+    result = GuardResult(
+        output="output",
+        execution_id="exec-456",
+    )
+    assert result.corrected is False
+    assert result.original_output is None
