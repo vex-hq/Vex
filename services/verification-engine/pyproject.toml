@@ -3,23 +3,24 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentguard-shared"
+name = "agentguard-verification-engine"
 version = "0.1.0"
 requires-python = ">=3.9"
 dependencies = [
+    "litellm>=1.0.0",
+    "jsonschema>=4.0.0",
     "pydantic>=2.0.0",
-    "sqlalchemy>=2.0.0",
-    "psycopg2-binary>=2.9.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
 ]
-
-[tool.hatch.build.targets.wheel]
-packages = ["shared"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.hatch.build.targets.wheel]
+packages = ["engine"]

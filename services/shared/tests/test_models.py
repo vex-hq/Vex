@@ -1,4 +1,5 @@
 from shared.models import (
+    ConversationTurn,
     StepRecord,
     IngestEvent,
     IngestBatchRequest,
@@ -41,6 +42,27 @@ def test_ingest_event_creation():
     )
     assert event.agent_id == "bot-1"
     assert event.execution_id is not None
+
+
+def test_ingest_event_session_fields():
+    event = IngestEvent(
+        agent_id="a",
+        input="x",
+        output="y",
+        session_id="s1",
+        parent_execution_id="p1",
+        sequence_number=2,
+    )
+    assert event.session_id == "s1"
+    assert event.parent_execution_id == "p1"
+    assert event.sequence_number == 2
+
+
+def test_ingest_event_session_fields_default_none():
+    event = IngestEvent(agent_id="a", input="x", output="y")
+    assert event.session_id is None
+    assert event.parent_execution_id is None
+    assert event.sequence_number is None
 
 
 def test_ingest_event_defaults():
@@ -167,6 +189,41 @@ def test_ingest_event_unique_execution_ids():
     assert event1.execution_id != event2.execution_id
 
 
+def test_conversation_turn_creation():
+    turn = ConversationTurn(
+        sequence_number=0,
+        input="What is ACME's revenue?",
+        output="ACME's revenue is $5.2B.",
+        task="Answer financial questions",
+    )
+    assert turn.sequence_number == 0
+    assert turn.input == "What is ACME's revenue?"
+    assert turn.output == "ACME's revenue is $5.2B."
+    assert turn.task == "Answer financial questions"
+
+
+def test_ingest_event_with_conversation_history():
+    history = [
+        ConversationTurn(sequence_number=0, input="hi", output="hello"),
+        ConversationTurn(sequence_number=1, input="q", output="a", task="chat"),
+    ]
+    event = IngestEvent(
+        agent_id="bot-1",
+        input="next q",
+        output="next a",
+        conversation_history=history,
+    )
+    assert event.conversation_history is not None
+    assert len(event.conversation_history) == 2
+    assert event.conversation_history[0].sequence_number == 0
+    assert event.conversation_history[1].task == "chat"
+
+
+def test_ingest_event_backward_compat_without_history():
+    event = IngestEvent(agent_id="bot-1", input="x", output="y")
+    assert event.conversation_history is None
+
+
 def test_ingest_event_with_steps():
     steps = [
         StepRecord(step_type="llm_call", name="generate", output="Hello"),
@@ -181,3 +238,55 @@ def test_ingest_event_with_steps():
     assert len(event.steps) == 2
     assert event.steps[0].step_type == "llm_call"
     assert event.steps[1].name == "search"
+
+
+# --- Correction response model tests ---
+
+
+def test_correction_attempt_response_creation():
+    from shared.models import CorrectionAttemptResponse
+    attempt = CorrectionAttemptResponse(
+        layer=1,
+        layer_name="repair",
+        corrected_output="fixed",
+        confidence=0.9,
+        action="pass",
+        success=True,
+        latency_ms=340.0,
+    )
+    assert attempt.layer == 1
+    assert attempt.success is True
+
+
+def test_verify_response_with_correction_fields():
+    from shared.models import VerifyResponse, CorrectionAttemptResponse
+    response = VerifyResponse(
+        execution_id="exec-123",
+        confidence=0.9,
+        action="pass",
+        output="corrected output",
+        corrected=True,
+        original_output="bad output",
+        correction_attempts=[
+            CorrectionAttemptResponse(
+                layer=1, layer_name="repair", corrected_output="fixed",
+                confidence=0.9, action="pass", success=True, latency_ms=340.0,
+            ),
+        ],
+    )
+    assert response.corrected is True
+    assert response.original_output == "bad output"
+    assert len(response.correction_attempts) == 1
+
+
+def test_verify_response_backward_compat_no_correction():
+    from shared.models import VerifyResponse
+    response = VerifyResponse(
+        execution_id="exec-456",
+        confidence=0.8,
+        action="pass",
+        output="output",
+    )
+    assert response.corrected is False
+    assert response.original_output is None
+    assert response.correction_attempts is None

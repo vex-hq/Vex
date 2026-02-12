@@ -9,6 +9,7 @@ Provides:
 import asyncio
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Request
@@ -30,8 +31,8 @@ logger = logging.getLogger("agentguard.sync-gateway")
 
 VERIFIED_STREAM_KEY = "executions.verified"
 RAW_STREAM_KEY = "executions.raw"
-GATEWAY_TIMEOUT_S = 2.0
-CORRECTION_TIMEOUT_S = 10.0
+GATEWAY_TIMEOUT_S = float(os.environ.get("GATEWAY_TIMEOUT_S", "2.0"))
+CORRECTION_TIMEOUT_S = float(os.environ.get("CORRECTION_TIMEOUT_S", "10.0"))
 MAX_CORRECTION_ATTEMPTS = 2
 
 router = APIRouter()
@@ -139,7 +140,7 @@ async def health_check():
 async def verify_endpoint(
     event: VerifyRequest,
     request: Request,
-    _api_key: str = Depends(verify_api_key),
+    _auth: object = Depends(verify_api_key),
 ):
     """Verify an agent's output synchronously.
 

@@ -1,8 +1,8 @@
-"""FastAPI application factory for the AgentGuard Ingestion API.
+"""FastAPI application factory for the AgentGuard Sync Verification Gateway.
 
-The service receives agent execution telemetry from the SDK and pushes
-events onto a Redis Stream (``executions.raw``) for downstream
-processing by the storage worker.
+Receives execution events from the SDK in sync mode, verifies them through
+the engine pipeline, and returns results inline.  Events are also emitted
+to Redis for downstream storage and alerting.
 """
 
 from contextlib import asynccontextmanager
@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Build and return the configured FastAPI application instance."""
     app = FastAPI(
-        title="AgentGuard Ingestion API",
+        title="AgentGuard Sync Verification Gateway",
         version="0.1.0",
         lifespan=lifespan,
     )

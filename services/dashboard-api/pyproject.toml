@@ -1,0 +1,17 @@
+[project]
+name = "agentguard-dashboard-api"
+version = "0.1.0"
+description = "Real-time WebSocket API for the AgentGuard dashboard"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "redis>=5.0.0",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "httpx>=0.25.0",
+]

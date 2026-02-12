@@ -48,7 +48,7 @@ async def health_check():
 async def ingest_single(
     event: IngestEvent,
     request: Request,
-    _api_key: str = Depends(verify_api_key),
+    _auth: object = Depends(verify_api_key),
 ):
     """Ingest a single execution event into the processing pipeline.
 
@@ -64,7 +64,7 @@ async def ingest_single(
 async def ingest_batch(
     batch: BatchIngestRequest,
     request: Request,
-    _api_key: str = Depends(verify_api_key),
+    _auth: object = Depends(verify_api_key),
 ):
     """Ingest a batch of execution events (max 50).
 

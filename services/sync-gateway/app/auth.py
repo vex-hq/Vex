@@ -1,8 +1,8 @@
-"""API key validation dependency for the Ingestion API.
+"""API key validation dependency for the Sync Verification Gateway.
 
 Uses the shared ``KeyValidator`` to authenticate incoming requests
-against the ``organizations.api_keys`` JSONB column.  The ingestion
-API requires the ``ingest`` scope.
+against the ``organizations.api_keys`` JSONB column.  The gateway
+requires the ``verify`` scope.
 """
 
 import os
@@ -26,7 +26,7 @@ def get_validator() -> KeyValidator:
     if _validator is None:
         _validator = KeyValidator(
             database_url=DATABASE_URL,
-            required_scope="ingest",
+            required_scope="verify",
         )
     return _validator
 
@@ -48,7 +48,7 @@ def verify_api_key(request: Request) -> KeyInfo:
 
     Raises:
         HTTPException: 401 if the key is missing, invalid, revoked, or
-            expired.  403 if the key lacks the ``ingest`` scope.
+            expired.  403 if the key lacks the ``verify`` scope.
             429 if the key's rate limit is exceeded.
     """
     api_key = request.headers.get("X-AgentGuard-Key")
