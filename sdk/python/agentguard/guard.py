@@ -287,7 +287,7 @@ class AgentGuard:
                 api_url=self.config.api_url,
                 api_key=self.api_key,
                 timeout_s=self.config.timeout_s,
-                correction_timeout_s=12.0,
+                correction_timeout_s=self.config.timeout_s * 3,
             )
 
         # Background event loop for async flushing

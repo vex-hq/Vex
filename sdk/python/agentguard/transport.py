@@ -147,12 +147,14 @@ class SyncTransport:
 
     Maintains two HTTP clients with different timeouts:
 
-    - A *default* client (``timeout_s``, default 2 s) used for normal
-      verification requests.
-    - A *correction* client (``correction_timeout_s``, default 12 s) used when
+    - A *default* client (``timeout_s``, default 30 s) used for normal
+      verification requests.  This must be long enough for the server to
+      run LLM-based verification checks.
+    - A *correction* client (``correction_timeout_s``, default 90 s) used when
       the caller requests server-side correction (``correction != "none"``).
-      The longer timeout accounts for the correction loop which can take up to
-      10 s on the gateway side.  This client is created lazily on first use.
+      The longer timeout accounts for the correction cascade which involves
+      verify → correct → re-verify loops on the gateway side.  This client
+      is created lazily on first use.
 
     Parameters
     ----------
@@ -171,8 +173,8 @@ class SyncTransport:
         self,
         api_url: str,
         api_key: str,
-        timeout_s: float = 2.0,
-        correction_timeout_s: float = 12.0,
+        timeout_s: float = 30.0,
+        correction_timeout_s: float = 90.0,
     ) -> None:
         self.api_url: str = api_url.rstrip("/")
         self.api_key: str = api_key

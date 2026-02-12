@@ -13,5 +13,5 @@ class GuardConfig(BaseModel):
     api_url: str = "https://api.tryvex.dev"
     flush_interval_s: float = 1.0
     flush_batch_size: int = 50
-    timeout_s: float = 2.0
+    timeout_s: float = 30.0
     conversation_window_size: int = 10
