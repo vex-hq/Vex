@@ -70,10 +70,10 @@ async def _consume_raw(redis_client: aioredis.Redis, s3_client: object) -> None:
                 for msg_id, data in entries:
                     try:
                         event = IngestEvent.model_validate_json(data["data"])
+                        org_id = event.metadata.get("org_id", FALLBACK_ORG) if event.metadata else FALLBACK_ORG
                         db_session = SessionLocal()
                         try:
-                            org_id = event.metadata.get("org_id", FALLBACK_ORG) if event.metadata else FALLBACK_ORG
-                        stored_notification = process_event(
+                            stored_notification = process_event(
                                 event,
                                 s3_client,
                                 db_session,
