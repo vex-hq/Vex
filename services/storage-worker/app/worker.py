@@ -170,26 +170,9 @@ def process_verified_event(
             "original_output": original_output,
         })
 
-    # Write one check_results row per check type
-    for check_name, check_data in checks.items():
-        db_session.execute(
-            text("""
-                INSERT INTO check_results (
-                    execution_id, check_type, score, passed, details
-                ) VALUES (
-                    :execution_id, :check_type, :score, :passed, :details
-                )
-            """),
-            {
-                "execution_id": execution_id,
-                "check_type": check_data.get("check_type", check_name),
-                "score": check_data.get("score"),
-                "passed": check_data.get("passed", True),
-                "details": json.dumps(check_data.get("details", {})),
-            },
-        )
-
-    # Update execution row with confidence, action, and corrected flag.
+    # Update execution row first — if the row doesn't exist yet
+    # (raw consumer hasn't created it), we skip check_results to
+    # avoid FK constraint violations and signal for retry.
     result = db_session.execute(
         text("""
             UPDATE executions
@@ -204,13 +187,33 @@ def process_verified_event(
         },
     )
     row_updated = result.rowcount > 0
+
     if not row_updated:
         logger.warning(
             "UPDATE for execution %s affected 0 rows — row may not exist yet",
             execution_id,
         )
-
-    db_session.commit()
+        db_session.rollback()
+    else:
+        # Write check_results only after confirming the execution exists
+        for check_name, check_data in checks.items():
+            db_session.execute(
+                text("""
+                    INSERT INTO check_results (
+                        execution_id, check_type, score, passed, details
+                    ) VALUES (
+                        :execution_id, :check_type, :score, :passed, :details
+                    )
+                """),
+                {
+                    "execution_id": execution_id,
+                    "check_type": check_data.get("check_type", check_name),
+                    "score": check_data.get("score"),
+                    "passed": check_data.get("passed", True),
+                    "details": json.dumps(check_data.get("details", {})),
+                },
+            )
+        db_session.commit()
     logger.info(
         "Stored verified results for execution %s (action=%s, confidence=%s, corrected=%s, row_updated=%s)",
         execution_id,

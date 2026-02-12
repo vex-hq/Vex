@@ -176,9 +176,9 @@ def test_process_verified_event_writes_check_results(verified_event, mock_db_ses
 def test_process_verified_event_updates_execution(verified_event, mock_db_session):
     process_verified_event(verified_event, mock_db_session)
 
-    # The last execute call should be the UPDATE
-    last_call = mock_db_session.execute.call_args_list[-1]
-    params = last_call[0][1]
+    # The first execute call should be the UPDATE (runs before check_results)
+    first_call = mock_db_session.execute.call_args_list[0]
+    params = first_call[0][1]
     assert params["execution_id"] == "exec-test-123"
     assert params["confidence"] == 0.85
     assert params["action"] == "pass"
@@ -219,8 +219,8 @@ def test_process_verified_event_with_correction(mock_db_session):
     result = process_verified_event(event, mock_db_session)
     assert result["corrected"] is True
 
-    # The UPDATE call should include corrected=True
-    update_call = mock_db_session.execute.call_args_list[-1]
+    # The UPDATE call (first) should include corrected=True
+    update_call = mock_db_session.execute.call_args_list[0]
     params = update_call[0][1]
     assert params["corrected"] is True
 
@@ -237,7 +237,7 @@ def test_process_verified_event_without_correction(mock_db_session):
     result = process_verified_event(event, mock_db_session)
     assert result["corrected"] is False
 
-    update_call = mock_db_session.execute.call_args_list[-1]
+    update_call = mock_db_session.execute.call_args_list[0]
     params = update_call[0][1]
     assert params["corrected"] is False
 
