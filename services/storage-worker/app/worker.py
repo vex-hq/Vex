@@ -156,11 +156,12 @@ def process_verified_event(
     )
 
     original_output_raw = event_data.get("original_output")
-    original_output = (
-        json.loads(original_output_raw)
-        if isinstance(original_output_raw, str) and original_output_raw
-        else original_output_raw
-    )
+    original_output = original_output_raw
+    if isinstance(original_output_raw, str) and original_output_raw:
+        try:
+            original_output = json.loads(original_output_raw)
+        except (json.JSONDecodeError, ValueError):
+            original_output = original_output_raw
 
     # Build correction metadata for potential future storage
     correction_metadata = None  # type: Optional[str]
