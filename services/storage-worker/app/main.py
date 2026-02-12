@@ -101,87 +101,8 @@ async def _consume_raw(redis_client: aioredis.Redis, s3_client: object) -> None:
             await asyncio.sleep(1)
 
 
-async def _process_verified_message(
-    redis_client: aioredis.Redis,
-    msg_id: str,
-    data: dict,
-) -> None:
-    """Process a single verified message with retry for missing execution row."""
-    max_retries = 5
-    retry_delay_s = 1.0
-
-    event_data = json.loads(data["data"])
-
-    for attempt in range(max_retries + 1):
-        db_session = SessionLocal()
-        try:
-            updated = process_verified_event(event_data, db_session)
-        finally:
-            db_session.close()
-
-        if updated.get("row_updated", True):
-            break
-
-        if attempt < max_retries:
-            logger.debug(
-                "Retry %d/%d: execution %s not found yet, waiting",
-                attempt + 1,
-                max_retries,
-                event_data.get("execution_id"),
-            )
-            await asyncio.sleep(retry_delay_s)
-
-    await redis_client.xack(
-        VERIFIED_STREAM_KEY, VERIFIED_CONSUMER_GROUP, msg_id,
-    )
-
-    # Publish updated notification for real-time consumers
-    await redis_client.xadd(
-        STORED_STREAM_KEY,
-        {"data": json.dumps(updated)},
-    )
-
-
 async def _consume_verified(redis_client: aioredis.Redis) -> None:
-    """Consumer loop for verified events (check_results + execution update).
-
-    On startup, processes any pending (unACKed) messages first, then
-    switches to reading new messages.  Uses ``asyncio.sleep`` for retries
-    so the raw consumer can progress concurrently on the same event loop.
-    """
-    # First pass: drain any pending messages left from prior crashes
-    while True:
-        try:
-            pending = await redis_client.xreadgroup(
-                groupname=VERIFIED_CONSUMER_GROUP,
-                consumername=CONSUMER_NAME,
-                streams={VERIFIED_STREAM_KEY: "0"},
-                count=10,
-            )
-            if not pending:
-                break
-            has_messages = False
-            for stream, entries in pending:
-                if not entries:
-                    continue
-                has_messages = True
-                for msg_id, data in entries:
-                    try:
-                        await _process_verified_message(redis_client, msg_id, data)
-                    except Exception as exc:
-                        logger.error(
-                            "Failed to process pending verified message %s: %s",
-                            msg_id, exc, exc_info=True,
-                        )
-            if not has_messages:
-                break
-        except Exception as exc:
-            logger.error("Pending verified drain error: %s", exc, exc_info=True)
-            break
-
-    logger.info("Pending verified messages drained, switching to new messages")
-
-    # Main loop: read new messages
+    """Consumer loop for verified events (check_results + execution update)."""
     while True:
         try:
             messages = await redis_client.xreadgroup(
@@ -197,11 +118,28 @@ async def _consume_verified(redis_client: aioredis.Redis) -> None:
             for stream, entries in messages:
                 for msg_id, data in entries:
                     try:
-                        await _process_verified_message(redis_client, msg_id, data)
+                        event_data = json.loads(data["data"])
+                        db_session = SessionLocal()
+                        try:
+                            updated = process_verified_event(event_data, db_session)
+                        finally:
+                            db_session.close()
+
+                        await redis_client.xack(
+                            VERIFIED_STREAM_KEY, VERIFIED_CONSUMER_GROUP, msg_id,
+                        )
+
+                        # Publish updated notification for real-time consumers
+                        await redis_client.xadd(
+                            STORED_STREAM_KEY,
+                            {"data": json.dumps(updated)},
+                        )
                     except Exception as exc:
                         logger.error(
                             "Failed to process verified message %s: %s",
-                            msg_id, exc, exc_info=True,
+                            msg_id,
+                            exc,
+                            exc_info=True,
                         )
         except Exception as exc:
             logger.error("Verified stream read error: %s", exc, exc_info=True)

@@ -258,9 +258,10 @@ async def verify_endpoint(
         # corrected result).
         event.metadata["already_verified"] = True
 
-        # Emit raw event first so the storage worker creates the execution row
-        # before the verified consumer tries to update it.
+        # Emit raw event first, then wait briefly for the storage worker to
+        # create the execution row before we emit the verified event.
         await redis.xadd(RAW_STREAM_KEY, {"data": event.model_dump_json()})
+        await asyncio.sleep(1)
         await redis.xadd(VERIFIED_STREAM_KEY, {"data": json.dumps(verified_data)})
     except Exception:
         logger.warning(
