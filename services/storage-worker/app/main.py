@@ -102,7 +102,15 @@ async def _consume_raw(redis_client: aioredis.Redis, s3_client: object) -> None:
 
 
 async def _consume_verified(redis_client: aioredis.Redis) -> None:
-    """Consumer loop for verified events (check_results + execution update)."""
+    """Consumer loop for verified events (check_results + execution update).
+
+    When the execution row doesn't exist yet (raw consumer hasn't created
+    it), we retry with ``asyncio.sleep`` so the raw consumer can progress
+    concurrently on the same event loop.
+    """
+    max_update_retries = 5
+    update_retry_delay_s = 1.0
+
     while True:
         try:
             messages = await redis_client.xreadgroup(
@@ -119,11 +127,33 @@ async def _consume_verified(redis_client: aioredis.Redis) -> None:
                 for msg_id, data in entries:
                     try:
                         event_data = json.loads(data["data"])
+
+                        # First attempt
                         db_session = SessionLocal()
                         try:
                             updated = process_verified_event(event_data, db_session)
                         finally:
                             db_session.close()
+
+                        # If the UPDATE hit 0 rows, the raw consumer hasn't
+                        # created the execution yet.  Retry with async sleeps
+                        # so the raw consumer can run on this same event loop.
+                        if not updated.get("row_updated", True):
+                            for attempt in range(max_update_retries):
+                                await asyncio.sleep(update_retry_delay_s)
+                                db_session = SessionLocal()
+                                try:
+                                    updated = process_verified_event(event_data, db_session)
+                                finally:
+                                    db_session.close()
+                                if updated.get("row_updated", True):
+                                    break
+                                logger.debug(
+                                    "Retry %d/%d: execution %s still not found",
+                                    attempt + 1,
+                                    max_update_retries,
+                                    event_data.get("execution_id"),
+                                )
 
                         await redis_client.xack(
                             VERIFIED_STREAM_KEY, VERIFIED_CONSUMER_GROUP, msg_id,
