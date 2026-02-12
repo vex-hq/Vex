@@ -9,7 +9,7 @@ def test_guard_config_defaults():
     assert config.transparency == "opaque"
     assert config.flush_interval_s == 1.0
     assert config.flush_batch_size == 50
-    assert config.timeout_s == 2.0
+    assert config.timeout_s == 30.0
 
 
 def test_guard_config_custom():
