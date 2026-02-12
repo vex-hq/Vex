@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  sdk-tests:
+    name: SDK Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install SDK
+        run: pip install -e "sdk/python[dev]"
+
+      - name: Run SDK tests
+        run: pytest sdk/python/tests/ -v --tb=short
+
+  service-tests:
+    name: Service Tests (${{ matrix.service }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service: [shared, ingestion-api, storage-worker, dashboard-api, verification-engine, sync-gateway, async-worker, alert-service]
+        include:
+          # Services that need the verification engine as a dependency
+          - service: sync-gateway
+            extra_deps: services/verification-engine
+          - service: async-worker
+            extra_deps: services/verification-engine
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install shared models
+        run: pip install -e services/shared
+
+      - name: Install verification engine (if needed)
+        if: matrix.extra_deps != ''
+        run: pip install -e ${{ matrix.extra_deps }}
+
+      - name: Install service
+        run: pip install -e "services/${{ matrix.service }}[dev]"
+
+      - name: Run tests
+        run: pytest services/${{ matrix.service }}/tests/ -v --tb=short
+
+  dashboard-typecheck:
+    name: Dashboard Typecheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Install dependencies
+        working-directory: nextjs-application
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: nextjs-application
+        run: pnpm --filter web typecheck
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [sdk-tests, service-tests]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ingestion-api image
+        run: docker build -f services/ingestion-api/Dockerfile -t agentguard-ingestion-api .
+
+      - name: Build storage-worker image
+        run: docker build -f services/storage-worker/Dockerfile -t agentguard-storage-worker .
+
+      - name: Build dashboard-api image
+        run: docker build -f services/dashboard-api/Dockerfile -t agentguard-dashboard-api .
+
+      - name: Build sync-gateway image
+        run: docker build -f services/sync-gateway/Dockerfile -t agentguard-sync-gateway .
+
+      - name: Build async-worker image
+        run: docker build -f services/async-worker/Dockerfile -t agentguard-async-worker .
+
+      - name: Build alert-service image
+        run: docker build -f services/alert-service/Dockerfile -t agentguard-alert-service .
