@@ -30,7 +30,7 @@ RAW_STREAM_KEY = "executions.raw"
 RAW_CONSUMER_GROUP = "storage-workers"
 VERIFIED_CONSUMER_GROUP = "storage-verified"
 CONSUMER_NAME = os.environ.get("CONSUMER_NAME", "storage-worker-1")
-DEFAULT_ORG = "default"
+FALLBACK_ORG = "default"
 
 
 async def _ensure_consumer_group(
@@ -72,11 +72,12 @@ async def _consume_raw(redis_client: aioredis.Redis, s3_client: object) -> None:
                         event = IngestEvent.model_validate_json(data["data"])
                         db_session = SessionLocal()
                         try:
-                            stored_notification = process_event(
+                            org_id = event.metadata.get("org_id", FALLBACK_ORG) if event.metadata else FALLBACK_ORG
+                        stored_notification = process_event(
                                 event,
                                 s3_client,
                                 db_session,
-                                org_id=DEFAULT_ORG,
+                                org_id=org_id,
                             )
                         finally:
                             db_session.close()
