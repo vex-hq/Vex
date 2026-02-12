@@ -7,8 +7,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.auth import verify_api_key, verify_ingest_key
 from app.main import create_app
 from engine.models import CheckResult, VerificationResult
+from shared.auth import KeyInfo
+
+
+def _fake_key_info() -> KeyInfo:
+    """Return a stub KeyInfo for test auth bypass."""
+    return KeyInfo(org_id="test-org", key_id="test-key", scopes=["verify", "ingest"])
 
 
 @pytest.fixture
@@ -23,6 +30,9 @@ def mock_redis():
 def app(mock_redis):
     application = create_app()
     application.state.redis = mock_redis
+    # Bypass auth for all test routes
+    application.dependency_overrides[verify_api_key] = _fake_key_info
+    application.dependency_overrides[verify_ingest_key] = _fake_key_info
     return application
 
 
@@ -130,15 +140,21 @@ async def test_verify_emits_redis_events(client, mock_redis):
 
 
 @pytest.mark.asyncio
-async def test_verify_missing_api_key(client):
-    response = await client.post(
-        "/v1/verify",
-        json={
-            "agent_id": "test-bot",
-            "input": "hello",
-            "output": "world",
-        },
-    )
+async def test_verify_missing_api_key(mock_redis):
+    """Auth is NOT bypassed here — missing header should return 401."""
+    application = create_app()
+    application.state.redis = mock_redis
+    # No dependency_overrides → real auth runs
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        response = await c.post(
+            "/v1/verify",
+            json={
+                "agent_id": "test-bot",
+                "input": "hello",
+                "output": "world",
+            },
+        )
     assert response.status_code == 401
 
 
@@ -475,3 +491,67 @@ async def test_verify_pass_skips_correction(client, mock_redis):
     assert data["action"] == "pass"
     assert data["corrected"] is False
     assert mock_verify.call_count == 1
+
+
+# --- Ingestion endpoint tests ---
+
+
+@pytest.mark.asyncio
+async def test_ingest_single_event(client, mock_redis):
+    event = {
+        "agent_id": "test-bot",
+        "input": {"query": "hello"},
+        "output": {"response": "world"},
+    }
+    response = await client.post(
+        "/v1/ingest",
+        json=event,
+        headers={"X-AgentGuard-Key": "test-key"},
+    )
+    assert response.status_code == 202
+    data = response.json()
+    assert data["accepted"] == 1
+    assert "execution_id" in data
+    mock_redis.xadd.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_ingest_batch(client, mock_redis):
+    events = {
+        "events": [
+            {"agent_id": "bot-1", "input": {}, "output": {}},
+            {"agent_id": "bot-2", "input": {}, "output": {}},
+            {"agent_id": "bot-3", "input": {}, "output": {}},
+        ]
+    }
+    response = await client.post(
+        "/v1/ingest/batch",
+        json=events,
+        headers={"X-AgentGuard-Key": "test-key"},
+    )
+    assert response.status_code == 202
+    data = response.json()
+    assert data["accepted"] == 3
+    assert len(data["execution_ids"]) == 3
+    assert mock_redis.xadd.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_ingest_rejects_invalid_payload(client):
+    response = await client.post(
+        "/v1/ingest",
+        json={"bad": "data"},
+        headers={"X-AgentGuard-Key": "test-key"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_batch_rejects_over_50_events(client):
+    events = {"events": [{"agent_id": f"bot-{i}", "input": {}, "output": {}} for i in range(51)]}
+    response = await client.post(
+        "/v1/ingest/batch",
+        json=events,
+        headers={"X-AgentGuard-Key": "test-key"},
+    )
+    assert response.status_code == 422

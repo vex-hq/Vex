@@ -1,8 +1,8 @@
-"""FastAPI application factory for the AgentGuard Sync Verification Gateway.
+"""FastAPI application factory for the AgentGuard API Gateway.
 
-Receives execution events from the SDK in sync mode, verifies them through
-the engine pipeline, and returns results inline.  Events are also emitted
-to Redis for downstream storage and alerting.
+Serves as the unified entry point for the SDK.  Handles both synchronous
+verification (``/v1/verify``) and async event ingestion (``/v1/ingest``).
+Events are emitted to Redis for downstream storage and alerting.
 """
 
 from contextlib import asynccontextmanager
@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Build and return the configured FastAPI application instance."""
     app = FastAPI(
-        title="AgentGuard Sync Verification Gateway",
+        title="AgentGuard API Gateway",
         version="0.1.0",
         lifespan=lifespan,
     )

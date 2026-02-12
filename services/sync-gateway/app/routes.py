@@ -1,9 +1,11 @@
-"""API routes for the Sync Verification Gateway.
+"""API routes for the AgentGuard API Gateway.
 
 Provides:
 - ``GET /health`` -- service health check.
 - ``POST /v1/verify`` -- synchronous verification of agent output,
   with optional correction cascade (up to 2 attempts, 10 s budget).
+- ``POST /v1/ingest`` -- single-event ingestion to Redis stream.
+- ``POST /v1/ingest/batch`` -- batch ingestion (up to 50 events).
 """
 
 import asyncio
@@ -13,10 +15,13 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel, Field
 
 from shared.models import (
     CheckResult as SharedCheckResult,
     CorrectionAttemptResponse,
+    IngestEvent,
+    IngestResponse,
     VerifyRequest,
     VerifyResponse,
 )
@@ -25,7 +30,7 @@ from engine.correction import correct as run_correction, select_layer
 from engine.models import CorrectionAttempt, VerificationConfig, VerificationResult
 from engine.pipeline import verify as run_verification
 
-from app.auth import verify_api_key
+from app.auth import verify_api_key, verify_ingest_key
 
 logger = logging.getLogger("agentguard.sync-gateway")
 
@@ -256,3 +261,56 @@ async def verify_endpoint(
         )
 
     return response
+
+
+# ------------------------------------------------------------------
+# Ingestion endpoints
+# ------------------------------------------------------------------
+
+
+class SingleIngestResponse(BaseModel):
+    """Response returned from the single-event ingestion endpoint."""
+
+    accepted: int
+    execution_id: str
+
+
+class BatchIngestRequest(BaseModel):
+    """Batch request with a hard cap of 50 events per payload."""
+
+    events: List[IngestEvent] = Field(..., max_length=50)
+
+
+@router.post("/v1/ingest", status_code=202, response_model=SingleIngestResponse)
+async def ingest_single(
+    event: IngestEvent,
+    request: Request,
+    _auth: object = Depends(verify_ingest_key),
+):
+    """Ingest a single execution event into the processing pipeline.
+
+    The event is serialised and pushed to the ``executions.raw`` Redis
+    Stream for downstream consumption by the async worker and storage worker.
+    """
+    redis = request.app.state.redis
+    await redis.xadd(RAW_STREAM_KEY, {"data": event.model_dump_json()})
+    return SingleIngestResponse(accepted=1, execution_id=event.execution_id)
+
+
+@router.post("/v1/ingest/batch", status_code=202, response_model=IngestResponse)
+async def ingest_batch(
+    batch: BatchIngestRequest,
+    request: Request,
+    _auth: object = Depends(verify_ingest_key),
+):
+    """Ingest a batch of execution events (max 50).
+
+    Each event is individually pushed to the ``executions.raw`` Redis
+    Stream. Returns the count of accepted events and their IDs.
+    """
+    redis = request.app.state.redis
+    execution_ids: List[str] = []
+    for event in batch.events:
+        await redis.xadd(RAW_STREAM_KEY, {"data": event.model_dump_json()})
+        execution_ids.append(event.execution_id)
+    return IngestResponse(accepted=len(execution_ids), execution_ids=execution_ids)
