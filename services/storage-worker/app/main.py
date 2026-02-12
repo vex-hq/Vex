@@ -157,7 +157,23 @@ async def run() -> None:
     redis_client = aioredis.from_url(redis_url, decode_responses=True)
 
     await _ensure_consumer_group(redis_client, RAW_STREAM_KEY, RAW_CONSUMER_GROUP)
-    await _ensure_consumer_group(redis_client, VERIFIED_STREAM_KEY, VERIFIED_CONSUMER_GROUP)
+
+    # Reset the verified consumer group on startup to clear any stuck
+    # pending messages from prior deployments.  This is safe because
+    # losing a verified update only means the execution keeps its
+    # default confidence/action until the next verification.
+    try:
+        await redis_client.xgroup_destroy(VERIFIED_STREAM_KEY, VERIFIED_CONSUMER_GROUP)
+        logger.info("Destroyed consumer group '%s' for clean start", VERIFIED_CONSUMER_GROUP)
+    except Exception:
+        pass
+    try:
+        await redis_client.xgroup_create(
+            VERIFIED_STREAM_KEY, VERIFIED_CONSUMER_GROUP, id="$", mkstream=True,
+        )
+        logger.info("Created consumer group '%s' from latest on '%s'", VERIFIED_CONSUMER_GROUP, VERIFIED_STREAM_KEY)
+    except Exception:
+        logger.debug("Consumer group '%s' already exists", VERIFIED_CONSUMER_GROUP)
 
     s3_client = get_s3_client()
     logger.info(
