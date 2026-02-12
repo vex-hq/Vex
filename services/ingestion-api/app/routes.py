@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from shared.models import IngestEvent, IngestResponse
 
 from app.auth import verify_api_key
+from shared.auth import KeyInfo
 
 STREAM_KEY = "executions.raw"
 
@@ -48,13 +49,15 @@ async def health_check():
 async def ingest_single(
     event: IngestEvent,
     request: Request,
-    _auth: object = Depends(verify_api_key),
+    auth: KeyInfo = Depends(verify_api_key),
 ):
     """Ingest a single execution event into the processing pipeline.
 
     The event is serialised and pushed to the ``executions.raw`` Redis
     Stream for downstream consumption by the storage worker.
+    The authenticated org_id is injected into event metadata.
     """
+    event.metadata["org_id"] = auth.org_id
     redis = request.app.state.redis
     await redis.xadd(STREAM_KEY, {"data": event.model_dump_json()})
     return SingleIngestResponse(accepted=1, execution_id=event.execution_id)
@@ -64,16 +67,18 @@ async def ingest_single(
 async def ingest_batch(
     batch: BatchIngestRequest,
     request: Request,
-    _auth: object = Depends(verify_api_key),
+    auth: KeyInfo = Depends(verify_api_key),
 ):
     """Ingest a batch of execution events (max 50).
 
     Each event is individually pushed to the ``executions.raw`` Redis
     Stream. Returns the count of accepted events and their IDs.
+    The authenticated org_id is injected into each event's metadata.
     """
     redis = request.app.state.redis
     execution_ids: List[str] = []
     for event in batch.events:
+        event.metadata["org_id"] = auth.org_id
         await redis.xadd(STREAM_KEY, {"data": event.model_dump_json()})
         execution_ids.append(event.execution_id)
     return IngestResponse(accepted=len(execution_ids), execution_ids=execution_ids)
