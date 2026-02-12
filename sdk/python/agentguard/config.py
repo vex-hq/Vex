@@ -14,3 +14,4 @@ class GuardConfig(BaseModel):
     flush_interval_s: float = 1.0
     flush_batch_size: int = 50
     timeout_s: float = 2.0
+    conversation_window_size: int = 10

@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentguard"
-version = "0.1.0"
+name = "agentx-sdk"
+version = "0.2.0"
 description = "The reliability layer for AI agents in production"
 requires-python = ">=3.9"
 license = {file = "LICENSE"}
@@ -45,6 +45,9 @@ Homepage = "https://oppla.ai/agentguard"
 Repository = "https://github.com/Agent-X-AI/Python-SDK"
 Documentation = "https://docs.oppla.ai/agentguard"
 "Issue Tracker" = "https://github.com/Agent-X-AI/Python-SDK/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentguard"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
