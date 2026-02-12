@@ -29,8 +29,11 @@ def mock_s3():
 @pytest.fixture
 def mock_db_session():
     mock = MagicMock()
-    mock.execute = MagicMock()
+    execute_result = MagicMock()
+    execute_result.rowcount = 1
+    mock.execute = MagicMock(return_value=execute_result)
     mock.commit = MagicMock()
+    mock.rollback = MagicMock()
     return mock
 
 

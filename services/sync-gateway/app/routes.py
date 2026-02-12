@@ -253,10 +253,10 @@ async def verify_endpoint(
                 [a.model_dump(mode="json") for a in response.correction_attempts]
             )
 
-        await redis.xadd(VERIFIED_STREAM_KEY, {"data": json.dumps(verified_data)})
-
-        # Also emit raw event for storage worker to persist the execution
+        # Emit raw event first so the storage worker creates the execution row
+        # before the verified consumer tries to update it.
         await redis.xadd(RAW_STREAM_KEY, {"data": event.model_dump_json()})
+        await redis.xadd(VERIFIED_STREAM_KEY, {"data": json.dumps(verified_data)})
     except Exception:
         logger.warning(
             "Failed to emit Redis events for %s", event.execution_id, exc_info=True,

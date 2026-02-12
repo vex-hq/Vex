@@ -14,6 +14,7 @@ it can be tested in isolation.
 
 import json
 import logging
+import time
 from typing import Any, Dict, Optional
 
 from sqlalchemy import text
@@ -189,20 +190,43 @@ def process_verified_event(
             },
         )
 
-    # Update execution row with confidence, action, and corrected flag
-    db_session.execute(
-        text("""
-            UPDATE executions
-            SET confidence = :confidence, action = :action, corrected = :corrected
-            WHERE execution_id = :execution_id
-        """),
-        {
-            "execution_id": execution_id,
-            "confidence": confidence,
-            "action": action,
-            "corrected": corrected,
-        },
-    )
+    # Update execution row with confidence, action, and corrected flag.
+    # The raw consumer may not have created the row yet (race condition),
+    # so we retry a few times with a short delay before giving up.
+    update_params = {
+        "execution_id": execution_id,
+        "confidence": confidence,
+        "action": action,
+        "corrected": corrected,
+    }
+    max_retries = 5
+    for attempt in range(max_retries):
+        result = db_session.execute(
+            text("""
+                UPDATE executions
+                SET confidence = :confidence, action = :action, corrected = :corrected
+                WHERE execution_id = :execution_id
+            """),
+            update_params,
+        )
+        if result.rowcount > 0:
+            break
+        # Row not found yet — raw consumer may still be creating it
+        db_session.rollback()
+        if attempt < max_retries - 1:
+            time.sleep(0.5)
+            logger.debug(
+                "Execution %s not found yet, retrying (%d/%d)",
+                execution_id,
+                attempt + 1,
+                max_retries,
+            )
+    else:
+        logger.warning(
+            "Execution %s not found after %d retries; check_results stored but execution not updated",
+            execution_id,
+            max_retries,
+        )
 
     db_session.commit()
     logger.info(
