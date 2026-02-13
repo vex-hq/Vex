@@ -188,9 +188,11 @@ async def verify_endpoint(
         # Build shared check results
         checks = _engine_checks_to_shared(result.checks)
 
-        # Build correction attempt responses for the wire format
+        # Build correction attempt responses for the wire format.
+        # When transparency is "transparent", include ALL attempts (even failed)
+        # so callers can see which layers were tried and why they failed.
         attempt_responses: Optional[List[CorrectionAttemptResponse]] = None
-        if transparency == "transparent" and corrected and correction_attempts:
+        if transparency == "transparent" and correction_attempts:
             attempt_responses = [
                 CorrectionAttemptResponse(
                     layer=a.layer,
@@ -211,7 +213,7 @@ async def verify_endpoint(
             output=final_output,
             checks=checks,
             corrected=corrected,
-            original_output=event.output if corrected and transparency == "transparent" else None,
+            original_output=event.output if correction_attempts and transparency == "transparent" else None,
             correction_attempts=attempt_responses,
         )
 
