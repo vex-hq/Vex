@@ -64,6 +64,23 @@ def process_event(
 
     trace_ref = f"s3://{S3_BUCKET}/{s3_key}"
 
+    # Auto-provision agent if it doesn't exist yet
+    db_session.execute(
+        text("""
+            INSERT INTO agents (agent_id, org_id, name, task, updated_at)
+            VALUES (:agent_id, :org_id, :name, :task, NOW())
+            ON CONFLICT (agent_id) DO UPDATE SET
+                updated_at = NOW(),
+                task = COALESCE(EXCLUDED.task, agents.task)
+        """),
+        {
+            "agent_id": event.agent_id,
+            "org_id": org_id,
+            "name": event.agent_id,
+            "task": event.task,
+        },
+    )
+
     # Write metadata to PostgreSQL
     db_session.execute(
         text("""

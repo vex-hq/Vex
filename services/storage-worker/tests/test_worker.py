@@ -47,7 +47,8 @@ def test_process_event_writes_to_s3(sample_event, mock_s3, mock_db_session):
 
 def test_process_event_writes_to_db(sample_event, mock_s3, mock_db_session):
     process_event(sample_event, s3_client=mock_s3, db_session=mock_db_session, org_id="org-1")
-    mock_db_session.execute.assert_called_once()
+    # 2 execute calls: agent upsert + execution insert
+    assert mock_db_session.execute.call_count == 2
     mock_db_session.commit.assert_called_once()
 
 
@@ -69,7 +70,8 @@ def test_process_event_s3_payload_is_valid_json(sample_event, mock_s3, mock_db_s
 
 def test_process_event_db_params(sample_event, mock_s3, mock_db_session):
     process_event(sample_event, s3_client=mock_s3, db_session=mock_db_session, org_id="org-1")
-    call_args = mock_db_session.execute.call_args
+    # Second execute call is the execution insert (first is agent upsert)
+    call_args = mock_db_session.execute.call_args_list[1]
     params = call_args[0][1]  # second positional arg is the params dict
     assert params["execution_id"] == "exec-test-123"
     assert params["agent_id"] == "test-bot"
@@ -81,7 +83,8 @@ def test_process_event_db_params(sample_event, mock_s3, mock_db_session):
 
 def test_process_event_db_params_include_cost_estimate(sample_event, mock_s3, mock_db_session):
     process_event(sample_event, s3_client=mock_s3, db_session=mock_db_session, org_id="org-1")
-    call_args = mock_db_session.execute.call_args
+    # Second execute call is the execution insert
+    call_args = mock_db_session.execute.call_args_list[1]
     params = call_args[0][1]
     assert params["cost_estimate"] == 0.0003
 
@@ -94,8 +97,8 @@ def test_session_fields_stored(sample_event, mock_s3, mock_db_session):
     assert result["session_id"] == "sess-123"
     assert result["parent_execution_id"] == "parent-456"
     assert result["sequence_number"] == 2
-    # Verify DB params
-    call_args = mock_db_session.execute.call_args
+    # Verify DB params (second execute call is execution insert)
+    call_args = mock_db_session.execute.call_args_list[1]
     params = call_args[0][1]
     assert params["session_id"] == "sess-123"
     assert params["parent_execution_id"] == "parent-456"
@@ -107,10 +110,22 @@ def test_session_fields_default_none(sample_event, mock_s3, mock_db_session):
     assert result["session_id"] is None
     assert result["parent_execution_id"] is None
     assert result["sequence_number"] is None
-    call_args = mock_db_session.execute.call_args
+    # Second execute call is execution insert
+    call_args = mock_db_session.execute.call_args_list[1]
     params = call_args[0][1]
     assert params["session_id"] is None
     assert params["sequence_number"] is None
+
+
+def test_process_event_upserts_agent(sample_event, mock_s3, mock_db_session):
+    process_event(sample_event, s3_client=mock_s3, db_session=mock_db_session, org_id="org-1")
+    # First execute call is the agent upsert
+    agent_call = mock_db_session.execute.call_args_list[0]
+    params = agent_call[0][1]
+    assert params["agent_id"] == "test-bot"
+    assert params["org_id"] == "org-1"
+    assert params["name"] == "test-bot"
+    assert params["task"] == "Answer questions"
 
 
 def test_process_event_returns_stored_notification(sample_event, mock_s3, mock_db_session):
