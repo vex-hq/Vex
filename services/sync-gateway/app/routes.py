@@ -14,7 +14,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from shared.models import (
@@ -137,8 +137,13 @@ async def _verify_and_correct(
 
 
 @router.get("/health")
-async def health_check():
-    """Return service health status."""
+async def health_check(request: Request):
+    """Return service health status with Redis dependency check."""
+    try:
+        await request.app.state.redis.ping()
+    except Exception:
+        logger.error("Health check failed: Redis unreachable", exc_info=True)
+        raise HTTPException(status_code=503, detail="Redis unreachable")
     return {"status": "healthy"}
 
 
@@ -221,6 +226,7 @@ async def verify_endpoint(
         logger.warning(
             "Verification timed out for event %s; returning pass-through",
             event.execution_id,
+            extra={"execution_id": event.execution_id, "agent_id": event.agent_id},
         )
         response = VerifyResponse(
             execution_id=event.execution_id,
@@ -267,6 +273,7 @@ async def verify_endpoint(
     except Exception:
         logger.warning(
             "Failed to emit Redis events for %s", event.execution_id, exc_info=True,
+            extra={"execution_id": event.execution_id, "agent_id": event.agent_id},
         )
 
     return response

@@ -14,6 +14,7 @@ import redis.asyncio as aioredis
 
 from app.db import SessionLocal
 from app.worker import process_verified_event
+from shared.redis_config import REDIS_CLIENT_OPTIONS
 
 logger = logging.getLogger("agentguard.alert-service")
 
@@ -38,7 +39,7 @@ async def run() -> None:
     )
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-    redis_client = aioredis.from_url(redis_url, decode_responses=True)
+    redis_client = aioredis.from_url(redis_url, **REDIS_CLIENT_OPTIONS)
 
     # Create consumer group; ignore error if it already exists.
     try:
@@ -87,9 +88,10 @@ async def run() -> None:
                             msg_id,
                             exc,
                             exc_info=True,
+                            extra={"msg_id": msg_id, "execution_id": event_data.get("execution_id") if 'event_data' in locals() else None},
                         )
         except Exception as exc:
-            logger.error("Stream read error: %s", exc, exc_info=True)
+            logger.error("Stream read error: %s", exc, exc_info=True, extra={"stream": STREAM_KEY})
             await asyncio.sleep(1)
 
 

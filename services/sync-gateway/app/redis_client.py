@@ -4,6 +4,8 @@ import os
 
 import redis.asyncio as redis
 
+from shared.redis_config import REDIS_CLIENT_OPTIONS
+
 
 async def get_redis() -> redis.Redis:
     """Create and return an async Redis client.
@@ -12,4 +14,4 @@ async def get_redis() -> redis.Redis:
     defaulting to ``redis://localhost:6379`` for local development.
     """
     url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-    return redis.from_url(url, decode_responses=True)
+    return redis.from_url(url, **REDIS_CLIENT_OPTIONS)

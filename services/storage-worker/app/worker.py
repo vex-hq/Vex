@@ -55,12 +55,20 @@ def process_event(
 
     # Write full payload to S3
     payload = event.model_dump_json()
-    s3_client.put_object(
-        Bucket=S3_BUCKET,
-        Key=s3_key,
-        Body=payload,
-        ContentType="application/json",
-    )
+    try:
+        s3_client.put_object(
+            Bucket=S3_BUCKET,
+            Key=s3_key,
+            Body=payload,
+            ContentType="application/json",
+        )
+    except Exception:
+        logger.error(
+            "Failed to upload to S3 (key=%s); proceeding with DB storage",
+            s3_key,
+            exc_info=True,
+            extra={"execution_id": event.execution_id, "s3_key": s3_key},
+        )
 
     trace_ref = f"s3://{S3_BUCKET}/{s3_key}"
 
@@ -210,6 +218,7 @@ def process_verified_event(
         logger.warning(
             "UPDATE for execution %s affected 0 rows — row may not exist yet",
             execution_id,
+            extra={"execution_id": execution_id},
         )
         db_session.rollback()
     else:

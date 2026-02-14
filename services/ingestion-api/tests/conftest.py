@@ -15,6 +15,13 @@ from unittest.mock import AsyncMock
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.auth import verify_api_key
+from shared.auth import KeyInfo
+
+
+def _fake_key_info() -> KeyInfo:
+    """Return a stub KeyInfo for test auth bypass."""
+    return KeyInfo(org_id="test-org", key_id="test-key", scopes=["ingest"])
 
 
 @pytest.fixture
@@ -28,4 +35,6 @@ def mock_redis():
 def client(mock_redis):
     app = create_app()
     app.state.redis = mock_redis
+    # Bypass auth for all test routes
+    app.dependency_overrides[verify_api_key] = _fake_key_info
     return TestClient(app)

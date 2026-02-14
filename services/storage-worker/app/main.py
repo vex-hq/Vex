@@ -23,6 +23,7 @@ from app.db import SessionLocal
 from app.s3_client import get_s3_client
 from app.worker import STORED_STREAM_KEY, VERIFIED_STREAM_KEY, process_event, process_verified_event
 from shared.models import IngestEvent
+from shared.redis_config import REDIS_CLIENT_OPTIONS
 
 logger = logging.getLogger("agentguard.storage-worker")
 
@@ -98,9 +99,10 @@ async def _consume_raw(redis_client: aioredis.Redis, s3_client: object) -> None:
                             msg_id,
                             exc,
                             exc_info=True,
+                            extra={"msg_id": msg_id, "execution_id": event.execution_id if 'event' in locals() else None, "org_id": org_id if 'org_id' in locals() else None},
                         )
         except Exception as exc:
-            logger.error("Raw stream read error: %s", exc, exc_info=True)
+            logger.error("Raw stream read error: %s", exc, exc_info=True, extra={"stream": RAW_STREAM_KEY})
             await asyncio.sleep(1)
 
 
@@ -146,9 +148,10 @@ async def _consume_verified(redis_client: aioredis.Redis) -> None:
                             msg_id,
                             exc,
                             exc_info=True,
+                            extra={"msg_id": msg_id, "execution_id": event_data.get("execution_id") if 'event_data' in locals() else None},
                         )
         except Exception as exc:
-            logger.error("Verified stream read error: %s", exc, exc_info=True)
+            logger.error("Verified stream read error: %s", exc, exc_info=True, extra={"stream": VERIFIED_STREAM_KEY})
             await asyncio.sleep(1)
 
 
@@ -160,7 +163,7 @@ async def run() -> None:
     )
 
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
-    redis_client = aioredis.from_url(redis_url, decode_responses=True)
+    redis_client = aioredis.from_url(redis_url, **REDIS_CLIENT_OPTIONS)
 
     await _ensure_consumer_group(redis_client, RAW_STREAM_KEY, RAW_CONSUMER_GROUP)
 
