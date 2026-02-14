@@ -51,9 +51,9 @@ def verify_api_key(request: Request) -> KeyInfo:
             expired.  403 if the key lacks the ``ingest`` scope.
             429 if the key's rate limit is exceeded.
     """
-    api_key = request.headers.get("X-AgentGuard-Key")
+    api_key = request.headers.get("X-Vex-Key") or request.headers.get("X-AgentGuard-Key")
     if not api_key:
-        raise HTTPException(status_code=401, detail="Missing X-AgentGuard-Key header")
+        raise HTTPException(status_code=401, detail="Missing X-Vex-Key header")
 
     try:
         return get_validator().validate(api_key)

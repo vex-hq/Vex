@@ -117,7 +117,8 @@ class KeyValidator:
         pool so it does not block the event loop.
 
         Args:
-            api_key: The raw API key from the ``X-AgentGuard-Key`` header.
+            api_key: The raw API key from the ``X-Vex-Key`` header
+                (falls back to ``X-AgentGuard-Key`` for backward compatibility).
 
         Returns:
             A ``KeyInfo`` with the resolved org_id, key_id, and scopes.

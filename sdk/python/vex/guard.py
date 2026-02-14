@@ -1,4 +1,4 @@
-"""AgentGuard client -- the main developer-facing API for agent reliability.
+"""Vex client -- the main developer-facing API for agent reliability.
 
 Provides three integration patterns:
 
@@ -21,10 +21,10 @@ import uuid
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Generator, List, Optional
 
-from agentguard.config import GuardConfig
-from agentguard.exceptions import AgentGuardBlockError, ConfigurationError
-from agentguard.models import ConversationTurn, ExecutionEvent, GuardResult, StepRecord
-from agentguard.transport import AsyncTransport, SyncTransport
+from vex.config import VexConfig
+from vex.exceptions import VexBlockError, ConfigurationError
+from vex.models import ConversationTurn, ExecutionEvent, VexResult, StepRecord
+from vex.transport import AsyncTransport, SyncTransport
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class Session:
 
     Usage::
 
-        session = guard.session(agent_id="chat-bot")
+        session = vex.session(agent_id="chat-bot")
         with session.trace(task="turn 1", input_data=msg) as ctx:
             ctx.record(response)
         # session.sequence is now 1
@@ -49,7 +49,7 @@ class Session:
 
     def __init__(
         self,
-        guard: "AgentGuard",
+        guard: "Vex",
         agent_id: str,
         session_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -116,16 +116,16 @@ class Session:
 
 
 class TraceContext:
-    """Accumulates execution data within a ``guard.trace()`` context manager.
+    """Accumulates execution data within a ``vex.trace()`` context manager.
 
     Records intermediate steps, ground truth, schema, and the final output.
     On context exit, builds an :class:`ExecutionEvent` and sends it through
-    the guard's processing pipeline.
+    the Vex processing pipeline.
 
     Parameters
     ----------
     guard:
-        The parent :class:`AgentGuard` instance.
+        The parent :class:`Vex` instance.
     agent_id:
         Identifier for the agent being traced.
     task:
@@ -136,7 +136,7 @@ class TraceContext:
 
     def __init__(
         self,
-        guard: "AgentGuard",
+        guard: "Vex",
         agent_id: str,
         task: Optional[str] = None,
         input_data: Any = None,
@@ -161,7 +161,7 @@ class TraceContext:
         self._sequence_number = sequence_number
         self._parent_execution_id = parent_execution_id
         self._conversation_history = conversation_history
-        self.result: Optional[GuardResult] = None
+        self.result: Optional[VexResult] = None
 
     def set_ground_truth(self, data: Any) -> None:
         """Set the ground truth reference data for verification."""
@@ -221,7 +221,7 @@ class TraceContext:
         self._output = output
 
     def _finalise(self) -> None:
-        """Build the execution event and process it through the guard."""
+        """Build the execution event and process it through the Vex client."""
         elapsed_ms = (time.monotonic() - self._start_time) * 1000.0
 
         event = ExecutionEvent(
@@ -245,23 +245,23 @@ class TraceContext:
         self.result = self._guard._process_event(event)
 
 
-class AgentGuard:
-    """The main AgentGuard client for agent reliability and observability.
+class Vex:
+    """The main Vex client for agent reliability and observability.
 
     Supports two operational modes:
 
     - **async** (default): Events are buffered and flushed in batches to the
       Ingestion API.  ``watch``/``run``/``trace`` return immediately with a
-      pass-through :class:`GuardResult`.
+      pass-through :class:`VexResult`.
 
     - **sync**: Each event is sent to the Sync Verification Gateway for inline
-      verification.  The returned :class:`GuardResult` contains the server's
+      verification.  The returned :class:`VexResult` contains the server's
       confidence score and action recommendation.
 
     Parameters
     ----------
     api_key:
-        API key for authenticating with AgentGuard backend services.
+        API key for authenticating with Vex backend services.
     config:
         Optional configuration object.  Defaults to async mode with standard
         thresholds.
@@ -270,7 +270,7 @@ class AgentGuard:
     def __init__(
         self,
         api_key: str,
-        config: Optional[GuardConfig] = None,
+        config: Optional[VexConfig] = None,
     ) -> None:
         # Validate API key
         if not api_key or not api_key.strip():
@@ -279,7 +279,7 @@ class AgentGuard:
         if len(api_key) < 10:
             raise ConfigurationError("API key appears invalid (too short)")
         self.api_key = api_key
-        self.config = config or GuardConfig()
+        self.config = config or VexConfig()
 
         # Always create async transport for telemetry
         self._async_transport = AsyncTransport(
@@ -306,7 +306,7 @@ class AgentGuard:
         self._flush_thread = threading.Thread(
             target=self._flush_loop,
             daemon=True,
-            name="agentguard-flush",
+            name="vex-flush",
         )
         self._flush_thread.start()
         self._closed = False
@@ -343,16 +343,16 @@ class AgentGuard:
     # Internal event processing
     # ------------------------------------------------------------------
 
-    def _process_event(self, event: ExecutionEvent) -> GuardResult:
+    def _process_event(self, event: ExecutionEvent) -> VexResult:
         """Process an execution event according to the configured mode.
 
         In sync mode, sends the event to the Verification Gateway for inline
-        verification and returns the server's response as a GuardResult.
+        verification and returns the server's response as a VexResult.
         If the verification call fails, logs a warning and returns a
         pass-through result.
 
         In async mode, enqueues the event for batched delivery and returns
-        a pass-through GuardResult immediately.
+        a pass-through VexResult immediately.
         """
         if self.config.mode == "sync" and self._sync_transport is not None:
             try:
@@ -362,7 +362,7 @@ class AgentGuard:
                     correction=self.config.correction,
                     transparency=self.config.transparency,
                 )
-                result = GuardResult(
+                result = VexResult(
                     output=response.get("output", event.output),
                     confidence=response.get("confidence"),
                     action=response.get("action", "pass"),
@@ -374,7 +374,7 @@ class AgentGuard:
                 )
 
                 if result.action == "block":
-                    raise AgentGuardBlockError(result)
+                    raise VexBlockError(result)
 
                 if result.action == "flag":
                     if self.config.log_event_ids:
@@ -390,7 +390,7 @@ class AgentGuard:
                         )
 
                 return result
-            except AgentGuardBlockError:
+            except VexBlockError:
                 raise
             except Exception:
                 if self.config.log_event_ids:
@@ -404,7 +404,7 @@ class AgentGuard:
                         "Sync verification failed; returning pass-through result",
                         exc_info=True,
                     )
-                return GuardResult(
+                return VexResult(
                     output=event.output,
                     action="pass",
                     execution_id=event.execution_id,
@@ -412,7 +412,7 @@ class AgentGuard:
 
         # Async mode: enqueue and return pass-through
         self._async_transport.enqueue(event)
-        return GuardResult(
+        return VexResult(
             output=event.output,
             action="pass",
             execution_id=event.execution_id,
@@ -427,16 +427,16 @@ class AgentGuard:
         agent_id: str,
         task: Optional[str] = None,
     ) -> Callable:
-        """Decorator that wraps a function with AgentGuard telemetry.
+        """Decorator that wraps a function with Vex telemetry.
 
         Usage::
 
-            @guard.watch(agent_id="support-bot", task="Answer billing questions")
+            @vex.watch(agent_id="support-bot", task="Answer billing questions")
             def handle_support(query: str) -> str:
                 return my_agent.run(query)
 
             result = handle_support("billing question")
-            # result is a GuardResult with output, confidence, action, execution_id
+            # result is a VexResult with output, confidence, action, execution_id
 
         Parameters
         ----------
@@ -453,7 +453,7 @@ class AgentGuard:
 
         def decorator(fn: Callable) -> Callable:
             @functools.wraps(fn)
-            def wrapper(*args: Any, **kwargs: Any) -> GuardResult:
+            def wrapper(*args: Any, **kwargs: Any) -> VexResult:
                 # Capture the input arguments
                 input_data: Any = args[0] if len(args) == 1 and not kwargs else {"args": args, "kwargs": kwargs}
 
@@ -490,12 +490,12 @@ class AgentGuard:
 
         Usage::
 
-            with guard.trace(agent_id="enricher", task="Enrich records") as trace:
+            with vex.trace(agent_id="enricher", task="Enrich records") as trace:
                 output = my_agent.run(data)
                 trace.set_ground_truth(source_docs)
                 trace.set_schema(output_schema)
                 trace.record(output)
-            # trace.result is a GuardResult
+            # trace.result is a VexResult
 
         Parameters
         ----------
@@ -532,15 +532,15 @@ class AgentGuard:
         ground_truth: Any = None,
         schema: Optional[Dict[str, Any]] = None,
         input_data: Any = None,
-    ) -> GuardResult:
-        """Execute a callable and wrap the result with AgentGuard processing.
+    ) -> VexResult:
+        """Execute a callable and wrap the result with Vex processing.
 
         This is a framework-agnostic escape hatch for cases where neither
         the decorator nor the context manager is convenient.
 
         Usage::
 
-            result = guard.run(
+            result = vex.run(
                 agent_id="report-gen",
                 task="Generate report",
                 fn=lambda: my_agent.run(query),
@@ -565,7 +565,7 @@ class AgentGuard:
 
         Returns
         -------
-        GuardResult
+        VexResult
             The processed result containing output, confidence, and action.
         """
         start = time.monotonic()
@@ -598,7 +598,7 @@ class AgentGuard:
 
         Usage::
 
-            session = guard.session(agent_id="chat-bot")
+            session = vex.session(agent_id="chat-bot")
             with session.trace(task="turn 1") as ctx:
                 ctx.record(output)
         """
@@ -614,7 +614,7 @@ class AgentGuard:
     # ------------------------------------------------------------------
 
     def close(self) -> None:
-        """Shut down the guard client, flushing any remaining events.
+        """Shut down the Vex client, flushing any remaining events.
 
         Stops the background flush thread (which handles final flush and
         loop cleanup) and closes the sync transport. Safe to call multiple times.

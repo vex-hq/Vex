@@ -1,9 +1,9 @@
-from agentguard.config import GuardConfig
-from agentguard.models import ThresholdConfig
+from vex.config import VexConfig
+from vex.models import ThresholdConfig
 
 
 def test_guard_config_defaults():
-    config = GuardConfig()
+    config = VexConfig()
     assert config.mode == "async"
     assert config.correction == "none"
     assert config.transparency == "opaque"
@@ -13,7 +13,7 @@ def test_guard_config_defaults():
 
 
 def test_guard_config_custom():
-    config = GuardConfig(
+    config = VexConfig(
         mode="sync",
         correction="cascade",
         transparency="transparent",
@@ -24,7 +24,7 @@ def test_guard_config_custom():
 
 
 def test_guard_config_with_custom_thresholds():
-    config = GuardConfig(
+    config = VexConfig(
         confidence_threshold=ThresholdConfig(
             pass_threshold=0.9,
             flag_threshold=0.6,

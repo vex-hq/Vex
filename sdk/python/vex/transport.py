@@ -1,4 +1,4 @@
-"""HTTP transport layer for sending telemetry to AgentGuard backend services.
+"""HTTP transport layer for sending telemetry to Vex backend services.
 
 Provides two transport implementations:
 
@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 
 import httpx
 
-from agentguard.models import ExecutionEvent, ThresholdConfig
+from vex.models import ExecutionEvent, ThresholdConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +30,11 @@ class AsyncTransport:
     Parameters
     ----------
     api_url:
-        Base URL of the Ingestion API (e.g. ``https://api.agentguard.dev``).
+        Base URL of the Ingestion API (e.g. ``https://api.tryvex.dev``).
     api_key:
-        API key sent via the ``X-AgentGuard-Key`` header.
+        API key sent via the ``X-Vex-Key`` header.
     flush_interval_s:
-        Maximum seconds between automatic flushes (used by the Guard client's
+        Maximum seconds between automatic flushes (used by the Vex client's
         periodic flush loop; this class itself does not start a timer).
     flush_batch_size:
         Number of buffered events that triggers an immediate flush.
@@ -75,7 +75,7 @@ class AsyncTransport:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(connect=5.0, read=self.timeout_s, write=10.0, pool=5.0),
-                headers={"X-AgentGuard-Key": self.api_key},
+                headers={"X-Vex-Key": self.api_key},
                 limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
             )
         return self._client
@@ -234,16 +234,16 @@ class SyncTransport:
     - A *correction* client (``correction_timeout_s``, default 90 s) used when
       the caller requests server-side correction (``correction != "none"``).
       The longer timeout accounts for the correction cascade which involves
-      verify → correct → re-verify loops on the gateway side.  This client
+      verify -> correct -> re-verify loops on the gateway side.  This client
       is created lazily on first use.
 
     Parameters
     ----------
     api_url:
         Base URL of the Sync Verification Gateway
-        (e.g. ``https://api.agentguard.dev``).
+        (e.g. ``https://api.tryvex.dev``).
     api_key:
-        API key sent via the ``X-AgentGuard-Key`` header.
+        API key sent via the ``X-Vex-Key`` header.
     timeout_s:
         HTTP request timeout in seconds for normal verification.
     correction_timeout_s:
@@ -264,7 +264,7 @@ class SyncTransport:
 
         self._client: httpx.Client = httpx.Client(
             timeout=httpx.Timeout(connect=5.0, read=self.timeout_s, write=10.0, pool=5.0),
-            headers={"X-AgentGuard-Key": self.api_key},
+            headers={"X-Vex-Key": self.api_key},
             limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
         )
         self._correction_client: Optional[httpx.Client] = None
@@ -278,7 +278,7 @@ class SyncTransport:
         if self._correction_client is None or self._correction_client.is_closed:
             self._correction_client = httpx.Client(
                 timeout=httpx.Timeout(connect=5.0, read=self.correction_timeout_s, write=10.0, pool=5.0),
-                headers={"X-AgentGuard-Key": self.api_key},
+                headers={"X-Vex-Key": self.api_key},
                 limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
             )
         return self._correction_client

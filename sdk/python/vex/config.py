@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from agentguard.models import ThresholdConfig
+from vex.models import ThresholdConfig
 
 
-class GuardConfig(BaseModel):
+class VexConfig(BaseModel):
     mode: str = "async"  # "sync" | "async"
     correction: str = "none"  # "cascade" | "none"
     transparency: str = "opaque"  # "opaque" | "transparent"

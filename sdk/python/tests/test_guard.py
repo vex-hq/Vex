@@ -1,4 +1,4 @@
-"""Tests for the AgentGuard client: watch decorator, trace context manager, run wrapper."""
+"""Tests for the Vex client: watch decorator, trace context manager, run wrapper."""
 
 import time
 from unittest.mock import MagicMock, patch
@@ -7,17 +7,17 @@ import httpx
 import pytest
 import respx
 
-from agentguard import AgentGuard, AgentGuardBlockError, ConfigurationError, ConversationTurn, GuardConfig, GuardResult
-from agentguard.models import ThresholdConfig
+from vex import Vex, VexBlockError, ConfigurationError, ConversationTurn, VexConfig, VexResult
+from vex.models import ThresholdConfig
 
 
 @pytest.fixture
 def guard():
-    g = AgentGuard(
+    g = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
     yield g
@@ -30,50 +30,50 @@ def test_guard_creation(guard):
 
 
 def test_guard_init_does_not_store_event_loop():
-    """AgentGuard constructor should not store an event loop on self."""
-    guard = AgentGuard(api_key="test-key-1234567890")
-    assert not hasattr(guard, "_loop"), "Guard should not store _loop on self"
+    """Vex constructor should not store an event loop on self."""
+    guard = Vex(api_key="test-key-1234567890")
+    assert not hasattr(guard, "_loop"), "Vex should not store _loop on self"
     guard.close()
 
 
 def test_guard_rejects_empty_api_key():
     with pytest.raises(ConfigurationError, match="cannot be empty"):
-        AgentGuard(api_key="")
+        Vex(api_key="")
 
 
 def test_guard_rejects_whitespace_api_key():
     with pytest.raises(ConfigurationError, match="cannot be empty"):
-        AgentGuard(api_key="   ")
+        Vex(api_key="   ")
 
 
 def test_guard_rejects_short_api_key():
     with pytest.raises(ConfigurationError, match="too short"):
-        AgentGuard(api_key="abc")
+        Vex(api_key="abc")
 
 
 def test_guard_strips_whitespace_from_api_key():
-    guard = AgentGuard(api_key="  test-key-1234567890  ")
+    guard = Vex(api_key="  test-key-1234567890  ")
     assert guard.api_key == "test-key-1234567890"
     guard.close()
 
 
 def test_default_config_does_not_log_event_ids():
-    guard = AgentGuard(api_key="test-key-1234567890", config=GuardConfig(mode="async"))
+    guard = Vex(api_key="test-key-1234567890", config=VexConfig(mode="async"))
     assert guard.config.log_event_ids is False
     guard.close()
 
 
 @respx.mock
 def test_guard_watch_decorator_async_mode():
-    route = respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    route = respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -90,15 +90,15 @@ def test_guard_watch_decorator_async_mode():
 
 @respx.mock
 def test_guard_watch_captures_latency():
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -114,15 +114,15 @@ def test_guard_watch_captures_latency():
 
 @respx.mock
 def test_guard_watch_handles_agent_exception():
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202)
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -137,15 +137,15 @@ def test_guard_watch_handles_agent_exception():
 
 @respx.mock
 def test_guard_run_explicit():
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -161,15 +161,15 @@ def test_guard_run_explicit():
 
 @respx.mock
 def test_guard_trace_context_manager():
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -187,7 +187,7 @@ def test_guard_trace_context_manager():
 
 @respx.mock
 def test_guard_sync_mode():
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-123",
             "confidence": 0.92,
@@ -198,11 +198,11 @@ def test_guard_sync_mode():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -219,15 +219,15 @@ def test_guard_sync_mode():
 @respx.mock
 def test_guard_trace_with_steps():
     """TraceContext.step() should record intermediate steps in the event."""
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -244,15 +244,15 @@ def test_guard_trace_with_steps():
 @respx.mock
 def test_guard_run_with_ground_truth_and_schema():
     """run() should forward ground_truth and schema to the event."""
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -271,15 +271,15 @@ def test_guard_run_with_ground_truth_and_schema():
 @respx.mock
 def test_guard_sync_mode_verify_failure_falls_through():
     """When sync verify fails (HTTP error), should log warning and return pass-through."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(500, json={"error": "internal"})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -297,15 +297,15 @@ def test_guard_sync_mode_verify_failure_falls_through():
 @respx.mock
 def test_guard_trace_set_token_count_and_cost():
     """TraceContext.set_token_count() and set_cost_estimate() should flow through to the event."""
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -322,15 +322,15 @@ def test_guard_trace_set_token_count_and_cost():
 @respx.mock
 def test_guard_trace_set_metadata():
     """TraceContext.set_metadata() should add key-value pairs to event metadata."""
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -399,11 +399,11 @@ def test_session_trace_metadata_overrides_session(guard):
 
 def test_guard_close_is_idempotent():
     """Calling close() multiple times should not raise."""
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
     guard.close()
@@ -412,8 +412,8 @@ def test_guard_close_is_idempotent():
 
 @respx.mock
 def test_guard_sync_mode_block_raises():
-    """When sync verify returns action=block, should raise AgentGuardBlockError."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    """When sync verify returns action=block, should raise VexBlockError."""
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-block",
             "confidence": 0.2,
@@ -424,11 +424,11 @@ def test_guard_sync_mode_block_raises():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -436,7 +436,7 @@ def test_guard_sync_mode_block_raises():
     def critical_agent(query: str) -> str:
         return "raw answer"
 
-    with pytest.raises(AgentGuardBlockError) as exc_info:
+    with pytest.raises(VexBlockError) as exc_info:
         critical_agent("test")
 
     assert exc_info.value.result.action == "block"
@@ -447,7 +447,7 @@ def test_guard_sync_mode_block_raises():
 @respx.mock
 def test_guard_sync_mode_flag_returns_normally():
     """When sync verify returns action=flag, should log warning and return normally."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-flag",
             "confidence": 0.6,
@@ -458,11 +458,11 @@ def test_guard_sync_mode_flag_returns_normally():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -479,7 +479,7 @@ def test_guard_sync_mode_flag_returns_normally():
 @respx.mock
 def test_guard_sync_mode_pass_returns_normally():
     """When sync verify returns action=pass, should return normally."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-pass",
             "confidence": 0.95,
@@ -490,11 +490,11 @@ def test_guard_sync_mode_pass_returns_normally():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -511,7 +511,7 @@ def test_guard_sync_mode_pass_returns_normally():
 @respx.mock
 def test_guard_sync_mode_threshold_config_sent():
     """Verify that threshold config is included in verify request payload."""
-    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+    route = respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-thresh",
             "confidence": 0.9,
@@ -522,11 +522,11 @@ def test_guard_sync_mode_threshold_config_sent():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
             confidence_threshold=ThresholdConfig(
                 pass_threshold=0.9,
                 flag_threshold=0.6,
@@ -554,16 +554,16 @@ def test_guard_sync_mode_threshold_config_sent():
 
 @respx.mock
 def test_guard_async_mode_never_raises_block():
-    """Async mode should never raise AgentGuardBlockError — events are fire-and-forget."""
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    """Async mode should never raise VexBlockError — events are fire-and-forget."""
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
@@ -580,7 +580,7 @@ def test_guard_async_mode_never_raises_block():
 @respx.mock
 def test_guard_sync_trace_block_raises():
     """trace() in sync mode should also raise on block."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-trace-block",
             "confidence": 0.1,
@@ -591,15 +591,15 @@ def test_guard_sync_trace_block_raises():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
         ),
     )
 
-    with pytest.raises(AgentGuardBlockError):
+    with pytest.raises(VexBlockError):
         with guard.trace(agent_id="trace-bot", task="trace task") as trace:
             trace.record("bad output")
 
@@ -631,11 +631,11 @@ def test_session_accumulates_history_after_three_turns(guard):
 
 def test_session_window_size_limits_history():
     """Window size should limit the number of turns kept in _history."""
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
             conversation_window_size=2,
         ),
     )
@@ -704,8 +704,8 @@ def test_session_turn_data_correctness(guard):
 
 @respx.mock
 def test_guard_sync_correction_returns_corrected_output():
-    """When server returns corrected=True, GuardResult should reflect corrected output."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    """When server returns corrected=True, VexResult should reflect corrected output."""
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-corrected",
             "confidence": 0.9,
@@ -720,11 +720,11 @@ def test_guard_sync_correction_returns_corrected_output():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
             correction="cascade",
         ),
     )
@@ -743,7 +743,7 @@ def test_guard_sync_correction_returns_corrected_output():
 @respx.mock
 def test_guard_sync_correction_opaque_hides_details():
     """Opaque mode: original_output and corrections should be None."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-opaque",
             "confidence": 0.9,
@@ -756,11 +756,11 @@ def test_guard_sync_correction_opaque_hides_details():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
             correction="cascade",
             transparency="opaque",
         ),
@@ -780,7 +780,7 @@ def test_guard_sync_correction_opaque_hides_details():
 @respx.mock
 def test_guard_sync_correction_transparent_shows_details():
     """Transparent mode: original_output and corrections should be populated."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-transparent",
             "confidence": 0.9,
@@ -795,11 +795,11 @@ def test_guard_sync_correction_transparent_shows_details():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
             correction="cascade",
             transparency="transparent",
         ),
@@ -819,8 +819,8 @@ def test_guard_sync_correction_transparent_shows_details():
 
 @respx.mock
 def test_guard_sync_correction_failed_raises_block():
-    """When correction fails (all attempts exhausted), should raise AgentGuardBlockError."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    """When correction fails (all attempts exhausted), should raise VexBlockError."""
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-block",
             "confidence": 0.2,
@@ -831,11 +831,11 @@ def test_guard_sync_correction_failed_raises_block():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
             correction="cascade",
         ),
     )
@@ -844,7 +844,7 @@ def test_guard_sync_correction_failed_raises_block():
     def my_agent(q: str) -> str:
         return "bad"
 
-    with pytest.raises(AgentGuardBlockError):
+    with pytest.raises(VexBlockError):
         my_agent("test")
     guard.close()
 
@@ -852,15 +852,15 @@ def test_guard_sync_correction_failed_raises_block():
 @respx.mock
 def test_guard_async_mode_ignores_correction():
     """Async mode should ignore correction setting -- fire-and-forget."""
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="async",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
             correction="cascade",
         ),
     )
@@ -878,7 +878,7 @@ def test_guard_async_mode_ignores_correction():
 @respx.mock
 def test_guard_sync_no_correction_unchanged():
     """correction=none -> existing behavior, no correction fields."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-none",
             "confidence": 0.6,
@@ -888,11 +888,11 @@ def test_guard_sync_no_correction_unchanged():
         })
     )
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key="ag_test_key",
-        config=GuardConfig(
+        config=VexConfig(
             mode="sync",
-            api_url="https://api.agentguard.dev",
+            api_url="https://api.tryvex.dev",
             correction="none",
         ),
     )

@@ -65,7 +65,7 @@ class ExecutionEvent(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
-class GuardResult(BaseModel):
+class VexResult(BaseModel):
     output: Any
     confidence: Optional[float] = None
     action: str = "pass"  # "pass" | "flag" | "block"

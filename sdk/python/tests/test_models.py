@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime, timezone
 
-from agentguard.models import (
+from vex.models import (
     ConversationTurn,
     ExecutionEvent,
-    GuardResult,
+    VexResult,
     StepRecord,
     ThresholdConfig,
 )
@@ -135,8 +135,8 @@ def test_execution_event_backward_compat_without_history():
     assert event.conversation_history is None
 
 
-def test_guard_result_creation():
-    result = GuardResult(
+def test_vex_result_creation():
+    result = VexResult(
         output={"response": "answer"},
         confidence=0.92,
         action="pass",
@@ -147,8 +147,8 @@ def test_guard_result_creation():
     assert result.corrections is None
 
 
-def test_guard_result_with_corrections():
-    result = GuardResult(
+def test_vex_result_with_corrections():
+    result = VexResult(
         output={"response": "corrected"},
         confidence=0.78,
         action="flag",
@@ -158,12 +158,11 @@ def test_guard_result_with_corrections():
     assert len(result.corrections) == 1
 
 
-# --- Correction fields on GuardResult ---
+# --- Correction fields on VexResult ---
 
 
-def test_guard_result_with_correction_fields():
-    from agentguard.models import GuardResult
-    result = GuardResult(
+def test_vex_result_with_correction_fields():
+    result = VexResult(
         output="corrected output",
         confidence=0.9,
         action="pass",
@@ -176,9 +175,8 @@ def test_guard_result_with_correction_fields():
     assert result.original_output == "bad output"
 
 
-def test_guard_result_backward_compat():
-    from agentguard.models import GuardResult
-    result = GuardResult(
+def test_vex_result_backward_compat():
+    result = VexResult(
         output="output",
         execution_id="exec-456",
     )

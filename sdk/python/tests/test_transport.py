@@ -4,8 +4,8 @@ import httpx
 import pytest
 import respx
 
-from agentguard.models import ExecutionEvent
-from agentguard.transport import AsyncTransport, SyncTransport
+from vex.models import ExecutionEvent
+from vex.transport import AsyncTransport, SyncTransport
 
 
 # ---------------------------------------------------------------------------
@@ -16,7 +16,7 @@ from agentguard.transport import AsyncTransport, SyncTransport
 @pytest.fixture
 def transport():
     return AsyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         flush_interval_s=0.1,
         flush_batch_size=5,
@@ -30,7 +30,7 @@ def transport():
 
 
 def test_transport_creation(transport):
-    assert transport.api_url == "https://api.agentguard.dev"
+    assert transport.api_url == "https://api.tryvex.dev"
     assert transport._buffer == []
 
 
@@ -43,7 +43,7 @@ def test_transport_enqueue(transport):
 @respx.mock
 @pytest.mark.asyncio
 async def test_transport_flush_sends_batch(transport):
-    route = respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    route = respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 3})
     )
     for _ in range(3):
@@ -64,7 +64,7 @@ async def test_transport_flush_sends_batch(transport):
 @respx.mock
 @pytest.mark.asyncio
 async def test_transport_flush_empty_buffer_noop(transport):
-    route = respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    route = respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202)
     )
     await transport.flush()
@@ -75,13 +75,13 @@ async def test_transport_flush_empty_buffer_noop(transport):
 @pytest.mark.asyncio
 async def test_transport_auto_flush_on_batch_size():
     transport = AsyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         flush_interval_s=10.0,
         flush_batch_size=3,
         timeout_s=2.0,
     )
-    route = respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    route = respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 3})
     )
 
@@ -97,7 +97,7 @@ async def test_transport_auto_flush_on_batch_size():
 @pytest.mark.asyncio
 async def test_transport_flush_failure_puts_events_back(transport):
     """On HTTP error the events should be returned to the buffer for retry."""
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(500, text="Internal Server Error")
     )
     for _ in range(3):
@@ -112,7 +112,7 @@ async def test_transport_flush_failure_puts_events_back(transport):
 @respx.mock
 @pytest.mark.asyncio
 async def test_transport_sends_api_key_header(transport):
-    route = respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    route = respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 1})
     )
     transport.enqueue(ExecutionEvent(agent_id="test", input={}, output={}))
@@ -120,13 +120,13 @@ async def test_transport_sends_api_key_header(transport):
 
     assert route.called
     request = route.calls.last.request
-    assert request.headers["X-AgentGuard-Key"] == "ag_test_key"
+    assert request.headers["X-Vex-Key"] == "ag_test_key"
 
 
 @respx.mock
 @pytest.mark.asyncio
 async def test_transport_close_flushes_remaining(transport):
-    route = respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    route = respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(202, json={"accepted": 2})
     )
     transport.enqueue(ExecutionEvent(agent_id="test", input={}, output={}))
@@ -145,7 +145,7 @@ async def test_transport_close_flushes_remaining(transport):
 
 @respx.mock
 def test_sync_transport_verify():
-    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+    route = respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -159,7 +159,7 @@ def test_sync_transport_verify():
         )
     )
     transport = SyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         timeout_s=2.0,
     )
@@ -173,11 +173,11 @@ def test_sync_transport_verify():
 
 @respx.mock
 def test_sync_transport_verify_raises_on_error():
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(500, text="Internal Server Error")
     )
     transport = SyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         timeout_s=2.0,
     )
@@ -189,7 +189,7 @@ def test_sync_transport_verify_raises_on_error():
 
 @respx.mock
 def test_sync_transport_sends_api_key_header():
-    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+    route = respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -203,7 +203,7 @@ def test_sync_transport_sends_api_key_header():
         )
     )
     transport = SyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         timeout_s=2.0,
     )
@@ -211,7 +211,7 @@ def test_sync_transport_sends_api_key_header():
     transport.verify(event)
 
     request = route.calls.last.request
-    assert request.headers["X-AgentGuard-Key"] == "ag_test_key"
+    assert request.headers["X-Vex-Key"] == "ag_test_key"
     transport.close()
 
 
@@ -222,14 +222,14 @@ def test_sync_transport_sends_api_key_header():
 def test_sync_transport_verify_forwards_correction_metadata():
     """verify() should include correction and transparency in metadata."""
     import json as _json
-    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+    route = respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "exec-123", "confidence": 0.9, "action": "pass",
             "output": "corrected", "checks": {}, "corrected": True,
         })
     )
     transport = SyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
     )
     event = ExecutionEvent(agent_id="test", input={}, output={})
@@ -244,14 +244,14 @@ def test_sync_transport_verify_forwards_correction_metadata():
 @respx.mock
 def test_sync_transport_correction_client_uses_longer_timeout():
     """When correction=cascade, should use correction timeout client (12s)."""
-    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+    route = respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "e", "confidence": 0.9, "action": "pass",
             "output": "ok", "checks": {},
         })
     )
     transport = SyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         timeout_s=2.0,
         correction_timeout_s=12.0,
@@ -268,14 +268,14 @@ def test_sync_transport_correction_client_uses_longer_timeout():
 @respx.mock
 def test_sync_transport_default_client_for_no_correction():
     """When correction=none, should use default client (2s timeout)."""
-    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+    route = respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "e", "confidence": 0.9, "action": "pass",
             "output": "ok", "checks": {},
         })
     )
     transport = SyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         timeout_s=2.0,
         correction_timeout_s=12.0,
@@ -291,14 +291,14 @@ def test_sync_transport_default_client_for_no_correction():
 @respx.mock
 def test_sync_transport_close_closes_both_clients():
     """close() should close both default and correction clients."""
-    respx.post("https://api.agentguard.dev/v1/verify").mock(
+    respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(200, json={
             "execution_id": "e", "confidence": 0.9, "action": "pass",
             "output": "ok", "checks": {},
         })
     )
     transport = SyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
     )
     event = ExecutionEvent(agent_id="test", input={}, output={})
@@ -319,7 +319,7 @@ def test_sync_transport_close_closes_both_clients():
 def test_transport_drops_events_when_buffer_full():
     """When buffer is at max_buffer_size, new events should be dropped."""
     transport = AsyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         flush_interval_s=0.1,
         flush_batch_size=1000,
@@ -344,7 +344,7 @@ def test_transport_drops_events_when_buffer_full():
 def test_transport_tracks_dropped_count():
     """_dropped_count should increment for each dropped event."""
     transport = AsyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         max_buffer_size=5,
     )
@@ -366,12 +366,12 @@ async def test_transport_flush_retry_respects_buffer_limit():
     """On flush failure, only events that fit within max_buffer_size are returned."""
     # Create transport with small buffer
     transport = AsyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         max_buffer_size=10,
     )
     # Mock API failure
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(500, text="Internal Server Error")
     )
 
@@ -395,12 +395,12 @@ async def test_transport_flush_retry_drops_overflow():
     """On flush failure with partial buffer, events exceeding max_buffer_size are dropped."""
     # Create transport with small buffer
     transport = AsyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         max_buffer_size=10,
     )
     # Mock API failure
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(500, text="Internal Server Error")
     )
 
@@ -450,7 +450,7 @@ async def test_flush_retries_on_server_error(transport):
         # Succeed on third attempt
         return httpx.Response(202, json={"accepted": 2})
 
-    respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(side_effect=side_effect)
+    respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(side_effect=side_effect)
 
     for _ in range(2):
         transport.enqueue(ExecutionEvent(agent_id="test", input={}, output={}))
@@ -467,7 +467,7 @@ async def test_flush_retries_on_server_error(transport):
 @pytest.mark.asyncio
 async def test_flush_no_retry_on_client_error(transport):
     """flush() should not retry on client errors (4xx) and should drop events."""
-    route = respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(
+    route = respx.post("https://api.tryvex.dev/v1/ingest/batch").mock(
         return_value=httpx.Response(401, text="Unauthorized")
     )
 
@@ -511,10 +511,10 @@ def test_sync_verify_retries_on_network_error():
             },
         )
 
-    respx.post("https://api.agentguard.dev/v1/verify").mock(side_effect=side_effect)
+    respx.post("https://api.tryvex.dev/v1/verify").mock(side_effect=side_effect)
 
     transport = SyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         timeout_s=2.0,
     )
@@ -530,12 +530,12 @@ def test_sync_verify_retries_on_network_error():
 @respx.mock
 def test_sync_verify_no_retry_on_http_error():
     """verify() should not retry on HTTP errors (4xx/5xx) and raise immediately."""
-    route = respx.post("https://api.agentguard.dev/v1/verify").mock(
+    route = respx.post("https://api.tryvex.dev/v1/verify").mock(
         return_value=httpx.Response(401, text="Unauthorized")
     )
 
     transport = SyncTransport(
-        api_url="https://api.agentguard.dev",
+        api_url="https://api.tryvex.dev",
         api_key="ag_test_key",
         timeout_s=2.0,
     )

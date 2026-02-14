@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentx-sdk"
+name = "vex-sdk"
 version = "0.3.0"
 description = "The reliability layer for AI agents in production"
 requires-python = ">=3.9"
@@ -41,13 +41,13 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://oppla.ai/agentguard"
+Homepage = "https://oppla.ai/vex"
 Repository = "https://github.com/Agent-X-AI/Python-SDK"
-Documentation = "https://docs.oppla.ai/agentguard"
+Documentation = "https://docs.oppla.ai/vex"
 "Issue Tracker" = "https://github.com/Agent-X-AI/Python-SDK/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["agentguard"]
+packages = ["vex"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
