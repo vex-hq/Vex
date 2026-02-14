@@ -29,6 +29,13 @@ def test_guard_creation(guard):
     assert guard.config.mode == "async"
 
 
+def test_guard_init_does_not_store_event_loop():
+    """AgentGuard constructor should not store an event loop on self."""
+    guard = AgentGuard(api_key="test-key-1234567890")
+    assert not hasattr(guard, "_loop"), "Guard should not store _loop on self"
+    guard.close()
+
+
 @respx.mock
 def test_guard_watch_decorator_async_mode():
     route = respx.post("https://api.agentguard.dev/v1/ingest/batch").mock(

@@ -291,8 +291,7 @@ class AgentGuard:
                 correction_timeout_s=self.config.timeout_s * 3,
             )
 
-        # Background event loop for async flushing
-        self._loop = asyncio.new_event_loop()
+        # Background flush thread
         self._flush_stop = threading.Event()
         self._flush_thread = threading.Thread(
             target=self._flush_loop,
@@ -309,18 +308,26 @@ class AgentGuard:
     def _flush_loop(self) -> None:
         """Periodically flush buffered events on a background thread.
 
-        Runs until :meth:`close` signals the stop event.
+        Creates its own event loop to avoid conflicting with any loop
+        running on the main thread (e.g. FastAPI, asyncio applications).
         """
-        asyncio.set_event_loop(self._loop)
-        while not self._flush_stop.is_set():
-            self._flush_stop.wait(timeout=self.config.flush_interval_s)
-            if not self._flush_stop.is_set():
-                try:
-                    self._loop.run_until_complete(self._async_transport.flush())
-                except Exception:
-                    logger.warning(
-                        "Background flush failed", exc_info=True
-                    )
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            while not self._flush_stop.is_set():
+                self._flush_stop.wait(timeout=self.config.flush_interval_s)
+                if not self._flush_stop.is_set():
+                    try:
+                        loop.run_until_complete(self._async_transport.flush())
+                    except Exception:
+                        logger.warning("Background flush failed", exc_info=True)
+        finally:
+            try:
+                loop.run_until_complete(self._async_transport.close())
+            except Exception:
+                logger.warning("Error during final async transport close", exc_info=True)
+            finally:
+                loop.close()
 
     # ------------------------------------------------------------------
     # Internal event processing
@@ -587,26 +594,18 @@ class AgentGuard:
     def close(self) -> None:
         """Shut down the guard client, flushing any remaining events.
 
-        Stops the background flush thread, performs a final flush, and
-        closes both async and sync transports.  Safe to call multiple times.
+        Stops the background flush thread (which handles final flush and
+        loop cleanup) and closes the sync transport. Safe to call multiple times.
         """
         if self._closed:
             return
         self._closed = True
 
-        # Signal the flush thread to stop
         self._flush_stop.set()
-        self._flush_thread.join(timeout=5.0)
+        self._flush_thread.join(timeout=30.0)
+        if self._flush_thread.is_alive():
+            logger.warning("Flush thread did not stop within 30s; some events may be lost")
 
-        # Final flush of any remaining buffered events
-        try:
-            self._loop.run_until_complete(self._async_transport.close())
-        except Exception:
-            logger.warning("Error during final async transport close", exc_info=True)
-        finally:
-            self._loop.close()
-
-        # Close sync transport if it exists
         if self._sync_transport is not None:
             try:
                 self._sync_transport.close()
