@@ -15,3 +15,4 @@ class GuardConfig(BaseModel):
     flush_batch_size: int = 50
     timeout_s: float = 30.0
     conversation_window_size: int = 10
+    max_buffer_size: int = 10000

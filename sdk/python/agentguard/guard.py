@@ -278,6 +278,7 @@ class AgentGuard:
             flush_interval_s=self.config.flush_interval_s,
             flush_batch_size=self.config.flush_batch_size,
             timeout_s=self.config.timeout_s,
+            max_buffer_size=self.config.max_buffer_size,
         )
 
         # Create sync transport only when needed for inline verification

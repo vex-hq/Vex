@@ -39,6 +39,9 @@ class AsyncTransport:
         Number of buffered events that triggers an immediate flush.
     timeout_s:
         HTTP request timeout in seconds.
+    max_buffer_size:
+        Maximum number of events that can be buffered. When full, new events
+        are dropped with a warning. Prevents OOM when the API is unavailable.
     """
 
     def __init__(
@@ -48,16 +51,19 @@ class AsyncTransport:
         flush_interval_s: float = 1.0,
         flush_batch_size: int = 50,
         timeout_s: float = 2.0,
+        max_buffer_size: int = 10000,
     ) -> None:
         self.api_url: str = api_url.rstrip("/")
         self.api_key: str = api_key
         self.flush_interval_s: float = flush_interval_s
         self.flush_batch_size: int = flush_batch_size
         self.timeout_s: float = timeout_s
+        self.max_buffer_size: int = max_buffer_size
 
         self._buffer: List[ExecutionEvent] = []
         self._lock: threading.Lock = threading.Lock()
         self._client: Optional[httpx.AsyncClient] = None
+        self._dropped_count: int = 0
 
     # ------------------------------------------------------------------
     # Lazy client initialisation
@@ -82,8 +88,20 @@ class AsyncTransport:
         If the buffer size reaches ``flush_batch_size``, an async flush is
         scheduled on the running event loop (best-effort; failures are logged
         and the events remain in the buffer for the next flush cycle).
+
+        If the buffer is full (``max_buffer_size``), the event is dropped
+        and a warning is logged every 100 dropped events to avoid log spam.
         """
         with self._lock:
+            if len(self._buffer) >= self.max_buffer_size:
+                self._dropped_count += 1
+                if self._dropped_count % 100 == 1:
+                    logger.warning(
+                        "Buffer full (%d events), dropping event (total dropped: %d)",
+                        self.max_buffer_size,
+                        self._dropped_count,
+                    )
+                return
             self._buffer.append(event)
             should_flush = len(self._buffer) >= self.flush_batch_size
 
@@ -105,6 +123,10 @@ class AsyncTransport:
 
         On success the buffer is cleared.  On failure the events are put back
         into the buffer so they can be retried on the next flush cycle.
+
+        When retrying, respects ``max_buffer_size``: if the buffer is already
+        partially full, only the events that fit are returned, and the rest
+        are dropped with a warning.
         """
         with self._lock:
             if not self._buffer:
@@ -133,7 +155,13 @@ class AsyncTransport:
                 exc_info=True,
             )
             with self._lock:
-                self._buffer = batch + self._buffer
+                available_space = max(0, self.max_buffer_size - len(self._buffer))
+                events_to_retry = batch[:available_space]
+                dropped = len(batch) - len(events_to_retry)
+                if dropped > 0:
+                    self._dropped_count += dropped
+                    logger.warning("Dropped %d events due to buffer overflow on retry", dropped)
+                self._buffer = events_to_retry + self._buffer
 
     async def close(self) -> None:
         """Flush remaining events and close the underlying HTTP client."""
