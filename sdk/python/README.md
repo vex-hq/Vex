@@ -1,14 +1,62 @@
+[![PyPI](https://img.shields.io/pypi/v/vex-sdk)](https://pypi.org/project/vex-sdk/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/Vex-AI-Dev/Python-SDK)](https://github.com/Vex-AI-Dev/Python-SDK)
+[![Docs](https://img.shields.io/badge/docs-docs.tryvex.dev-brightgreen)](https://docs.tryvex.dev)
+
 # Vex Python SDK
 
-The reliability layer for AI agents in production. Trace executions, enforce guardrails, and monitor agent behavior — with zero changes to your agent's core logic.
+**Your AI agent doesn't crash. It drifts.** Vex is the runtime reliability layer that detects when your agent's behavior silently changes in production — before your customers notice.
 
-## Installation
+The agent passes all evals. Ships to production. Works great for a week. Then slowly starts producing subtly different outputs. No error. No crash. No alert. Just quietly doing 90% of the job instead of 100%.
+
+Vex catches that moment.
+
+## What it does
+
+- **Drift Detection** — knows what "normal" looks like for your agent and catches when behavior shifts
+- **Execution Tracing** — auto-capture input/output/latency with decorators. Zero changes to your agent code
+- **Sync Verification** — real-time pass/flag/block decisions with configurable confidence thresholds
+- **Correction Cascade** — auto-repairs unreliable outputs instead of just blocking them
+
+## See it in action
 
 ```bash
 pip install vex-sdk
 ```
 
-## Quick Start
+```python
+from vex import Vex, VexConfig
+
+guard = Vex(
+    api_key="your-api-key",
+    config=VexConfig(mode="sync", api_url="https://api.tryvex.dev"),
+)
+
+@guard.watch(agent_id="support-bot")
+def handle_ticket(query: str) -> str:
+    return call_llm(query)
+
+result = handle_ticket("How do I reset my password?")
+print(result.action)      # "pass" | "flag" | "block"
+print(result.confidence)   # 0.92
+
+# If the agent's response drifts from its baseline behavior,
+# Vex flags it before your customer sees it.
+```
+
+## Why Vex?
+
+| | Evals / Testing | Tracing (LangSmith etc.) | **Vex** |
+|---|---|---|---|
+| When | Before deployment | After something breaks | **Continuously in production** |
+| What it tells you | "Agent was good" | "Here's what happened" | **"Agent just changed"** |
+| Catches drift? | No | No | **Yes** |
+
+Most monitoring tells you the agent ran. Vex tells you the agent changed.
+
+## Detailed Usage
+
+### Quick Start
 
 ```python
 from vex import Vex, VexConfig
@@ -30,7 +78,7 @@ with guard.trace(agent_id="my-agent", task="summarize") as ctx:
     ctx.record(result)
 ```
 
-## Sync Verification
+### Sync Verification
 
 Run inline verification with pass/flag/block decisions. When the verification engine determines an output is unreliable, the SDK raises `VexBlockError` so your application can handle it gracefully.
 
@@ -57,7 +105,7 @@ except VexBlockError as e:
     print(f"Blocked: confidence={e.result.confidence}")
 ```
 
-## Correction Cascade
+### Correction Cascade
 
 Automatically correct unreliable outputs instead of blocking. When enabled, the verification engine attempts to fix issues and returns the corrected output.
 
@@ -77,7 +125,7 @@ if result.corrected:
     print(f"Original: {result.original_output}")
 ```
 
-## Session Tracking & Conversation History
+### Session Tracking & Conversation History
 
 Group related executions into sessions with automatic conversation history for multi-turn verification (hallucination, drift, coherence).
 
@@ -96,6 +144,17 @@ with session.trace(task="follow-up", input_data="Tell me more") as ctx:
 ```
 
 The session maintains a sliding window of conversation history (configurable via `conversation_window_size`), enabling cross-turn verification checks like self-contradiction detection and goal drift analysis.
+
+## Integrations
+
+Vex works with any AI agent framework. Drop it into:
+
+- **LangChain / LangGraph** agents
+- **CrewAI** crews
+- **OpenAI Assistants** / function calling
+- **Custom agents** — any Python function that calls an LLM
+
+No framework lock-in. If your code calls an LLM, Vex can watch it.
 
 ## Configuration
 
@@ -120,6 +179,15 @@ VexConfig(
 )
 ```
 
+## Get Started
+
+1. `pip install vex-sdk`
+2. Get your API key at [tryvex.dev](https://tryvex.dev)
+3. Add `@guard.watch()` to your agent function
+4. Deploy. Vex learns what "normal" looks like and alerts you when it changes.
+
+Full docs: [docs.tryvex.dev](https://docs.tryvex.dev)
+
 ## What's New in v0.3.0
 
 - **Rebranded to Vex**: `pip install vex-sdk`, `from vex import Vex, VexConfig`
@@ -130,14 +198,23 @@ VexConfig(
 - **`VexBlockError`**: Exception raised when verification blocks output, with the full `VexResult` attached
 - **`ConversationTurn` Model**: First-class conversation turn representation for multi-turn agents
 
+## Contributing
+
+We welcome contributions. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+If you find Vex useful, consider starring this repo — it helps others discover it.
+
+## Links
+
+- Website: [tryvex.dev](https://tryvex.dev)
+- Docs: [docs.tryvex.dev](https://docs.tryvex.dev)
+- Twitter: [@7hakurg](https://x.com/7hakurg)
+- Issues: [GitHub Issues](https://github.com/Vex-AI-Dev/Python-SDK/issues)
+
 ## Requirements
 
 - Python 3.9+
 - Dependencies: `httpx`, `pydantic` (v2)
-
-## Documentation
-
-Full documentation: [docs.tryvex.dev](https://docs.tryvex.dev)
 
 ## License
 

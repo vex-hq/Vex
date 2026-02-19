@@ -7,18 +7,17 @@ Sends three executions designed to trigger different correction layers:
 """
 
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+from vex import Vex, VexConfig
 
-from agentguard import GuardConfig, AgentGuard
-
-API_KEY = os.environ["AGENTGUARD_API_KEY"]
-API_URL = os.environ["AGENTGUARD_API_URL"]
+API_KEY = os.environ.get("VEX_API_KEY") or os.environ.get("AGENTGUARD_API_KEY", "")
+API_URL = os.environ.get("VEX_API_URL") or os.environ.get(
+    "AGENTGUARD_API_URL", "https://api.tryvex.dev"
+)
 
 
 def print_result(result):
-    """Pretty-print a GuardResult."""
+    """Pretty-print a VexResult."""
     print(f"  Action:     {result.action}")
     print(f"  Confidence: {result.confidence}")
     print(f"  Corrected:  {result.corrected}")
@@ -57,9 +56,9 @@ def test_layer1_repair():
     print("TEST: Layer 1 - Repair (mild failure, confidence > 0.5)")
     print("=" * 70)
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key=API_KEY,
-        config=GuardConfig(
+        config=VexConfig(
             api_url=API_URL,
             mode="sync",
             correction="cascade",
@@ -92,9 +91,9 @@ def test_layer2_constrained_regen():
     print("TEST: Layer 2 - Constrained Regen (moderate failure, confidence 0.3-0.5)")
     print("=" * 70)
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key=API_KEY,
-        config=GuardConfig(
+        config=VexConfig(
             api_url=API_URL,
             mode="sync",
             correction="cascade",
@@ -133,9 +132,9 @@ def test_layer3_full_reprompt():
     print("TEST: Layer 3 - Full Re-prompt (severe failure, confidence <= 0.3)")
     print("=" * 70)
 
-    guard = AgentGuard(
+    guard = Vex(
         api_key=API_KEY,
-        config=GuardConfig(
+        config=VexConfig(
             api_url=API_URL,
             mode="sync",
             correction="cascade",
