@@ -42,6 +42,26 @@ class StepRecord(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class GuardrailRule(BaseModel):
+    """A single custom guardrail rule.
+
+    Rule types:
+    - ``regex``: Match output against a regex pattern. Triggers if matched.
+    - ``keyword``: Block/flag if output contains any of the specified terms.
+    - ``threshold``: Flag if a numeric metric exceeds a limit
+      (e.g. token_count > 5000, cost > 0.10, latency_ms > 10000).
+    - ``llm``: Natural-language rule evaluated by LLM
+      (e.g. "block if the agent recommends a competitor").
+    """
+
+    id: Optional[str] = None
+    name: str = ""
+    rule_type: str  # "regex", "keyword", "threshold", "llm"
+    condition: Dict[str, Any] = Field(default_factory=dict)
+    action: str = "flag"  # "flag" or "block"
+    enabled: bool = True
+
+
 class IngestEvent(BaseModel):
     """Telemetry payload received from the SDK.
 

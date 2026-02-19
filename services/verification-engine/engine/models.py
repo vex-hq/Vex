@@ -25,6 +25,17 @@ class CheckResult(BaseModel):
     details: Dict[str, Any] = Field(default_factory=dict)
 
 
+class GuardrailRule(BaseModel):
+    """A single custom guardrail rule (mirrors shared.models.GuardrailRule)."""
+
+    id: Optional[str] = None
+    name: str = ""
+    rule_type: str  # "regex", "keyword", "threshold", "llm"
+    condition: Dict[str, Any] = Field(default_factory=dict)
+    action: str = "flag"  # "flag" or "block"
+    enabled: bool = True
+
+
 class VerificationConfig(BaseModel):
     """Configuration for verification thresholds and check weights."""
 
@@ -37,6 +48,7 @@ class VerificationConfig(BaseModel):
     )
     pass_threshold: float = 0.8
     flag_threshold: float = 0.5
+    guardrails: List[GuardrailRule] = Field(default_factory=list)
 
 
 class CorrectionAttempt(BaseModel):

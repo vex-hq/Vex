@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from engine.models import CheckResult, ConversationTurn, VerificationConfig
+from engine.models import CheckResult, ConversationTurn, GuardrailRule, VerificationConfig
 from engine.pipeline import _rebalance_weights, route_action, verify
 from shared.models import StepRecord
 
@@ -309,3 +309,82 @@ def test_rebalance_weights():
     # proportions of original keys should be preserved
     assert abs(rebalanced["schema"] / rebalanced["drift"] - 1.0) < 1e-9
     assert rebalanced["hallucination"] > rebalanced["schema"]
+
+
+# --- Guardrails pipeline tests ---
+
+
+@pytest.mark.asyncio
+async def test_pipeline_with_guardrails_keyword_block():
+    """A keyword block guardrail should force action to block."""
+    config = VerificationConfig(
+        guardrails=[
+            GuardrailRule(name="no-competitor", rule_type="keyword", condition={"keywords": ["RivalCo"]}, action="block"),
+        ],
+    )
+
+    with patch("engine.hallucination.check", new_callable=AsyncMock) as mock_hal, \
+         patch("engine.drift.check", new_callable=AsyncMock) as mock_drift:
+        mock_hal.return_value = CheckResult(check_type="hallucination", score=1.0, passed=True, details={})
+        mock_drift.return_value = CheckResult(check_type="drift", score=1.0, passed=True, details={})
+
+        result = await verify(output="Try RivalCo for better results", config=config)
+
+    assert "guardrails" in result.checks
+    assert result.checks["guardrails"].passed is False
+    assert result.action == "block"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_with_guardrails_flag_only():
+    """A flag guardrail violation should escalate pass to flag."""
+    config = VerificationConfig(
+        guardrails=[
+            GuardrailRule(name="no-emails", rule_type="regex", condition={"pattern": r"\S+@\S+"}, action="flag"),
+        ],
+    )
+
+    with patch("engine.hallucination.check", new_callable=AsyncMock) as mock_hal, \
+         patch("engine.drift.check", new_callable=AsyncMock) as mock_drift:
+        mock_hal.return_value = CheckResult(check_type="hallucination", score=1.0, passed=True, details={})
+        mock_drift.return_value = CheckResult(check_type="drift", score=1.0, passed=True, details={})
+
+        result = await verify(output="Email me at test@example.com", config=config)
+
+    assert "guardrails" in result.checks
+    assert result.checks["guardrails"].passed is False
+    assert result.action in ("flag", "block")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_without_guardrails_no_check():
+    """No guardrails configured — guardrails check should not be in results."""
+    with patch("engine.hallucination.check", new_callable=AsyncMock) as mock_hal, \
+         patch("engine.drift.check", new_callable=AsyncMock) as mock_drift:
+        mock_hal.return_value = CheckResult(check_type="hallucination", score=1.0, passed=True, details={})
+        mock_drift.return_value = CheckResult(check_type="drift", score=1.0, passed=True, details={})
+
+        result = await verify(output="clean output")
+
+    assert "guardrails" not in result.checks
+
+
+@pytest.mark.asyncio
+async def test_pipeline_guardrails_passing_does_not_affect_action():
+    """Guardrails that pass should not change the action."""
+    config = VerificationConfig(
+        guardrails=[
+            GuardrailRule(name="no-bad", rule_type="keyword", condition={"keywords": ["bad"]}, action="block"),
+        ],
+    )
+
+    with patch("engine.hallucination.check", new_callable=AsyncMock) as mock_hal, \
+         patch("engine.drift.check", new_callable=AsyncMock) as mock_drift:
+        mock_hal.return_value = CheckResult(check_type="hallucination", score=1.0, passed=True, details={})
+        mock_drift.return_value = CheckResult(check_type="drift", score=1.0, passed=True, details={})
+
+        result = await verify(output="all good here", config=config)
+
+    assert "guardrails" in result.checks
+    assert result.checks["guardrails"].passed is True
+    assert result.action == "pass"

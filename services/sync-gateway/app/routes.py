@@ -31,6 +31,7 @@ from engine.models import CorrectionAttempt, VerificationConfig, VerificationRes
 from engine.pipeline import verify as run_verification
 
 from app.auth import verify_api_key, verify_ingest_key
+from app.guardrails_loader import load_guardrails
 from shared.auth import KeyInfo
 from shared.plan_limits import get_plan_config
 
@@ -82,6 +83,7 @@ async def _verify_and_correct(
         conversation_history=event.conversation_history,
         config=config,
         steps=getattr(event, "steps", None),
+        metadata=event.metadata,
     )
 
     final_output = event.output
@@ -211,9 +213,13 @@ async def verify_endpoint(
         correction_mode = "none"
         correction_skipped = True
 
+    # Load guardrails from DB (agent-specific + org-wide)
+    guardrail_rules = load_guardrails(auth.org_id, event.agent_id)
+
     config = VerificationConfig(
         pass_threshold=thresholds.get("pass_threshold", 0.8),
         flag_threshold=thresholds.get("flag_threshold", 0.5),
+        guardrails=guardrail_rules,
     )
 
     # Dynamic timeout: 10 s for correction (cascade/auto), 2 s for verify-only

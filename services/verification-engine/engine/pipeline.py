@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from engine import confidence as confidence_scorer
 from engine import coherence
 from engine import drift
+from engine import guardrails as guardrails_checker
 from engine import hallucination
 from engine import schema_validator
 from engine import tool_loop
@@ -25,6 +26,7 @@ logger = logging.getLogger("agentguard.verification-engine.pipeline")
 
 COHERENCE_WEIGHT = 0.20
 TOOL_LOOP_WEIGHT = 0.15
+GUARDRAILS_WEIGHT = 0.20
 
 
 def _rebalance_weights(
@@ -86,12 +88,13 @@ async def verify(
     conversation_history: Optional[List[ConversationTurn]] = None,
     config: Optional[VerificationConfig] = None,
     steps: Optional[list] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> VerificationResult:
     """Run the full verification pipeline on agent output.
 
     1. Schema validation (deterministic, sync)
     1b. Tool loop detection (deterministic, sync, when steps provided)
-    2. Hallucination + drift + optionally coherence (LLM-based, async in parallel)
+    2. Hallucination + drift + optionally coherence + guardrails (async in parallel)
     3. Composite confidence score
     4. Action routing based on thresholds
 
@@ -101,8 +104,9 @@ async def verify(
         schema: JSON Schema for schema validation.
         ground_truth: Reference data for hallucination checking.
         conversation_history: Prior conversation turns for conversation-aware checks.
-        config: Optional verification config (weights, thresholds).
+        config: Optional verification config (weights, thresholds, guardrails).
         steps: Optional list of agent steps (tool calls, LLM calls) for loop detection.
+        metadata: Optional execution metadata for threshold guardrail rules.
 
     Returns:
         VerificationResult with confidence, action, and per-check results.
@@ -120,6 +124,8 @@ async def verify(
     # 2. LLM checks in parallel
     has_history = bool(conversation_history)
 
+    has_guardrails = bool(cfg.guardrails)
+
     llm_tasks = [
         hallucination.check(output, ground_truth, conversation_history),
         drift.check(output, task, conversation_history),
@@ -127,6 +133,9 @@ async def verify(
 
     if has_history:
         llm_tasks.append(coherence.check(output, conversation_history))
+
+    if has_guardrails:
+        llm_tasks.append(guardrails_checker.check(output, cfg.guardrails, metadata))
 
     llm_results = await asyncio.gather(*llm_tasks)
 
@@ -155,10 +164,33 @@ async def verify(
             weights = {k: v * scale for k, v in weights.items()}
         weights["tool_loop"] = TOOL_LOOP_WEIGHT
 
+    if has_guardrails:
+        # Guardrails result is the last in llm_results
+        guardrails_idx = 2 + (1 if has_history else 0)
+        guardrails_result = llm_results[guardrails_idx]
+        checks["guardrails"] = guardrails_result
+        original_total = sum(weights.values())
+        if original_total > 0:
+            scale = (original_total - GUARDRAILS_WEIGHT) / original_total
+            weights = {k: v * scale for k, v in weights.items()}
+        weights["guardrails"] = GUARDRAILS_WEIGHT
+
     confidence = confidence_scorer.compute(checks, weights)
 
     # 4. Route action
     action = route_action(confidence, cfg.pass_threshold, cfg.flag_threshold)
+
+    # 4b. Guardrails override: if any guardrail rule has action="block"
+    # and was violated, force the action to "block" regardless of confidence.
+    if has_guardrails and "guardrails" in checks:
+        gr = checks["guardrails"]
+        if not gr.passed:
+            violations = gr.details.get("violations", [])
+            has_block_violation = any(v.get("action") == "block" for v in violations)
+            if has_block_violation:
+                action = "block"
+            elif action == "pass":
+                action = "flag"
 
     return VerificationResult(
         confidence=confidence,
