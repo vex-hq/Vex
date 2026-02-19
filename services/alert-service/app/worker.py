@@ -1,8 +1,12 @@
 """Core processing logic for the alert service.
 
 Receives verified events, filters for flag/block actions, resolves
-webhook URLs, delivers notifications, and records delivery status
-in the alerts table.
+webhook URLs, delivers notifications (HTTP and Slack), and records
+delivery status in the alerts table.
+
+Delivery channels are gated by the org's plan:
+- ``webhook_alerts``: HTTP webhook delivery (pro+)
+- ``slack_alerts``: Slack webhook delivery (team+)
 
 This module is intentionally decoupled from the Redis consumer loop so
 it can be tested in isolation.
@@ -17,11 +21,14 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy import text
 
+from app.slack import deliver_slack, format_slack_message, get_slack_webhook_url
 from app.webhook import deliver
+from shared.plan_limits import get_plan_config
 
 logger = logging.getLogger("agentguard.alert-service")
 
 DEFAULT_ORG = "default"
+DASHBOARD_BASE_URL = os.environ.get("DASHBOARD_BASE_URL")
 
 
 def get_webhook_url(agent_id: str) -> Optional[str]:
@@ -44,11 +51,33 @@ def get_webhook_url(agent_id: str) -> Optional[str]:
     return os.environ.get("WEBHOOK_URL")
 
 
+def _get_org_plan(org_id: str, db_session: object) -> str:
+    """Look up the plan for an org from the database.
+
+    Returns:
+        The plan name string, defaulting to ``"free"`` if not found.
+    """
+    try:
+        result = db_session.execute(
+            text("SELECT plan FROM organizations WHERE org_id = :org_id"),
+            {"org_id": org_id},
+        )
+        row = result.fetchone()
+        return row[0] if row else "free"
+    except Exception:
+        logger.warning("Failed to look up plan for org %s, defaulting to free", org_id)
+        return "free"
+
+
 async def process_verified_event(
     event_data: Dict[str, Any],
     db_session: object,
 ) -> Optional[Dict[str, Any]]:
-    """Process a verified event and deliver webhook if needed.
+    """Process a verified event and deliver notifications if needed.
+
+    Delivery is gated by the org's plan limits:
+    - HTTP webhooks require ``webhook_alerts`` (pro+)
+    - Slack alerts require ``slack_alerts`` (team+)
 
     Args:
         event_data: The verified event dict from Redis.
@@ -69,7 +98,9 @@ async def process_verified_event(
     confidence_str = event_data.get("confidence", "")
     confidence = float(confidence_str) if confidence_str else None
 
-    webhook_url = get_webhook_url(agent_id)
+    # Look up org plan for feature gating
+    plan = _get_org_plan(org_id, db_session)
+    plan_config = get_plan_config(plan)
 
     # Build alert record
     alert_id = str(uuid.uuid4())
@@ -83,24 +114,49 @@ async def process_verified_event(
         if not check.get("passed", True)
     ]
 
-    # Deliver webhook if URL is configured
+    # --- HTTP webhook delivery (gated by plan) ---
     delivered = False
     delivery_attempts = 0
     response_status = None
+    webhook_url = None
 
-    if webhook_url:
-        payload = {
-            "event": "verification.failed",
-            "alert_id": alert_id,
-            "agent_id": agent_id,
-            "execution_id": execution_id,
-            "confidence": confidence,
-            "action": action,
-            "failure_types": failure_types,
-            "summary": f"Agent {agent_id} output {action}ed verification (confidence={confidence})",
-        }
-        delivered, response_status = await deliver(webhook_url, payload)
-        delivery_attempts = 3 if not delivered else 1
+    if plan_config.webhook_alerts:
+        webhook_url = get_webhook_url(agent_id)
+        if webhook_url:
+            payload = {
+                "event": "verification.failed",
+                "alert_id": alert_id,
+                "agent_id": agent_id,
+                "execution_id": execution_id,
+                "confidence": confidence,
+                "action": action,
+                "failure_types": failure_types,
+                "summary": f"Agent {agent_id} output {action}ed verification (confidence={confidence})",
+            }
+            delivered, response_status = await deliver(webhook_url, payload)
+            delivery_attempts = 3 if not delivered else 1
+
+    # --- Slack delivery (gated by plan) ---
+    slack_delivered = False
+    slack_url = None
+
+    if plan_config.slack_alerts:
+        slack_url = get_slack_webhook_url(agent_id)
+        if slack_url:
+            slack_payload = format_slack_message(
+                alert_id=alert_id,
+                agent_id=agent_id,
+                execution_id=execution_id,
+                action=action,
+                severity=severity,
+                confidence=confidence,
+                failure_types=failure_types,
+                dashboard_base_url=DASHBOARD_BASE_URL,
+            )
+            slack_delivered, _ = await deliver_slack(slack_url, slack_payload)
+
+    # Combined delivery status: either channel succeeded
+    any_delivered = delivered or slack_delivered
 
     # Write alert to database
     now = datetime.now(timezone.utc)
@@ -125,10 +181,10 @@ async def process_verified_event(
             "org_id": org_id,
             "alert_type": f"verification_{action}",
             "severity": severity,
-            "delivered": delivered,
-            "webhook_url": webhook_url,
+            "delivered": any_delivered,
+            "webhook_url": webhook_url or slack_url,
             "delivery_attempts": delivery_attempts,
-            "last_attempt_at": now if webhook_url else None,
+            "last_attempt_at": now if (webhook_url or slack_url) else None,
             "response_status": response_status,
             "created_at": now,
         },
@@ -136,11 +192,12 @@ async def process_verified_event(
     db_session.commit()
 
     logger.info(
-        "Alert %s created for execution %s (action=%s, delivered=%s)",
+        "Alert %s created for execution %s (action=%s, webhook=%s, slack=%s)",
         alert_id,
         execution_id,
         action,
         delivered,
+        slack_delivered,
     )
 
     return {
@@ -148,5 +205,6 @@ async def process_verified_event(
         "execution_id": execution_id,
         "agent_id": agent_id,
         "action": action,
-        "delivered": delivered,
+        "delivered": any_delivered,
+        "slack_delivered": slack_delivered,
     }
