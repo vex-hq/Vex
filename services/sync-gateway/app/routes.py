@@ -81,6 +81,7 @@ async def _verify_and_correct(
         ground_truth=event.ground_truth,
         conversation_history=event.conversation_history,
         config=config,
+        steps=getattr(event, "steps", None),
     )
 
     final_output = event.output
@@ -132,6 +133,7 @@ async def _verify_and_correct(
                 ground_truth=event.ground_truth,
                 conversation_history=event.conversation_history,
                 config=config,
+                steps=getattr(event, "steps", None),
             )
 
             if result.action == "pass":

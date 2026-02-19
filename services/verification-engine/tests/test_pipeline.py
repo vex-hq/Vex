@@ -4,8 +4,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from engine.models import ConversationTurn, VerificationConfig
+from engine.models import CheckResult, ConversationTurn, VerificationConfig
 from engine.pipeline import _rebalance_weights, route_action, verify
+from shared.models import StepRecord
 
 
 def test_route_action_pass():
@@ -241,6 +242,57 @@ async def test_pipeline_custom_weights_with_coherence():
 
     assert "coherence" in result.checks
     # Coherence score is 0.3 which should pull confidence down
+    assert result.confidence is not None
+    assert result.confidence < 1.0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_runs_tool_loop_check_when_steps_provided():
+    """Pipeline includes tool_loop check when steps are passed."""
+    steps = [
+        StepRecord(step_type="tool_call", name="search", input="q", output="r"),
+        StepRecord(step_type="tool_call", name="read", input="f", output="d"),
+    ]
+
+    with patch("engine.hallucination.check", new_callable=AsyncMock) as mock_hal, \
+         patch("engine.drift.check", new_callable=AsyncMock) as mock_drift:
+        mock_hal.return_value = CheckResult(check_type="hallucination", score=1.0, passed=True, details={})
+        mock_drift.return_value = CheckResult(check_type="drift", score=1.0, passed=True, details={})
+
+        result = await verify(output="test output", steps=steps)
+
+    assert "tool_loop" in result.checks
+    assert result.checks["tool_loop"].passed is True
+
+
+@pytest.mark.asyncio
+async def test_pipeline_skips_tool_loop_when_no_steps():
+    """Pipeline does not include tool_loop when no steps provided."""
+    with patch("engine.hallucination.check", new_callable=AsyncMock) as mock_hal, \
+         patch("engine.drift.check", new_callable=AsyncMock) as mock_drift:
+        mock_hal.return_value = CheckResult(check_type="hallucination", score=1.0, passed=True, details={})
+        mock_drift.return_value = CheckResult(check_type="drift", score=1.0, passed=True, details={})
+
+        result = await verify(output="test output")
+
+    assert "tool_loop" not in result.checks
+
+
+@pytest.mark.asyncio
+async def test_pipeline_tool_loop_failure_affects_confidence():
+    """A tool loop detection failure lowers composite confidence."""
+    steps = [
+        StepRecord(step_type="tool_call", name="search", input="q", output="r")
+    ] * 30
+
+    with patch("engine.hallucination.check", new_callable=AsyncMock) as mock_hal, \
+         patch("engine.drift.check", new_callable=AsyncMock) as mock_drift:
+        mock_hal.return_value = CheckResult(check_type="hallucination", score=1.0, passed=True, details={})
+        mock_drift.return_value = CheckResult(check_type="drift", score=1.0, passed=True, details={})
+
+        result = await verify(output="test output", steps=steps)
+
+    assert result.checks["tool_loop"].passed is False
     assert result.confidence is not None
     assert result.confidence < 1.0
 

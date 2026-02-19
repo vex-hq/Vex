@@ -18,11 +18,13 @@ from engine import coherence
 from engine import drift
 from engine import hallucination
 from engine import schema_validator
+from engine import tool_loop
 from engine.models import CheckResult, ConversationTurn, VerificationConfig, VerificationResult
 
 logger = logging.getLogger("agentguard.verification-engine.pipeline")
 
 COHERENCE_WEIGHT = 0.20
+TOOL_LOOP_WEIGHT = 0.15
 
 
 def _rebalance_weights(
@@ -83,10 +85,12 @@ async def verify(
     ground_truth: Any = None,
     conversation_history: Optional[List[ConversationTurn]] = None,
     config: Optional[VerificationConfig] = None,
+    steps: Optional[list] = None,
 ) -> VerificationResult:
     """Run the full verification pipeline on agent output.
 
     1. Schema validation (deterministic, sync)
+    1b. Tool loop detection (deterministic, sync, when steps provided)
     2. Hallucination + drift + optionally coherence (LLM-based, async in parallel)
     3. Composite confidence score
     4. Action routing based on thresholds
@@ -98,6 +102,7 @@ async def verify(
         ground_truth: Reference data for hallucination checking.
         conversation_history: Prior conversation turns for conversation-aware checks.
         config: Optional verification config (weights, thresholds).
+        steps: Optional list of agent steps (tool calls, LLM calls) for loop detection.
 
     Returns:
         VerificationResult with confidence, action, and per-check results.
@@ -106,6 +111,11 @@ async def verify(
 
     # 1. Schema validation (deterministic, sync)
     schema_result = schema_validator.validate(output, schema)
+
+    # 1b. Tool loop detection (deterministic, sync)
+    tool_loop_result = None
+    if steps:
+        tool_loop_result = tool_loop.check(steps=steps)
 
     # 2. LLM checks in parallel
     has_history = bool(conversation_history)
@@ -136,6 +146,14 @@ async def verify(
         weights = _rebalance_weights(cfg.weights, COHERENCE_WEIGHT)
     else:
         weights = cfg.weights
+
+    if tool_loop_result is not None:
+        checks["tool_loop"] = tool_loop_result
+        original_total = sum(weights.values())
+        if original_total > 0:
+            scale = (original_total - TOOL_LOOP_WEIGHT) / original_total
+            weights = {k: v * scale for k, v in weights.items()}
+        weights["tool_loop"] = TOOL_LOOP_WEIGHT
 
     confidence = confidence_scorer.compute(checks, weights)
 

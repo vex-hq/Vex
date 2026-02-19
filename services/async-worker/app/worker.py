@@ -37,6 +37,7 @@ async def process_event(event: IngestEvent) -> Dict[str, Any]:
             schema=event.schema_definition,
             ground_truth=event.ground_truth,
             conversation_history=event.conversation_history,
+            steps=event.steps,
         )
 
         checks_data = {}
