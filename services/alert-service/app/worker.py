@@ -21,6 +21,7 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy import text
 
+from app.dedup import AlertDeduplicator
 from app.slack import deliver_slack, format_slack_message, get_slack_webhook_url
 from app.webhook import deliver
 from shared.plan_limits import get_plan_config
@@ -29,6 +30,9 @@ logger = logging.getLogger("agentguard.alert-service")
 
 DEFAULT_ORG = "default"
 DASHBOARD_BASE_URL = os.environ.get("DASHBOARD_BASE_URL")
+
+# Module-level deduplicator instance (shared across all events in this process)
+_deduplicator = AlertDeduplicator()
 
 
 def get_webhook_url(agent_id: str) -> Optional[str]:
@@ -114,46 +118,55 @@ async def process_verified_event(
         if not check.get("passed", True)
     ]
 
-    # --- HTTP webhook delivery (gated by plan) ---
+    # --- Deduplication check ---
+    alert_type = f"verification_{action}"
+    should_send, suppressed_count = _deduplicator.should_deliver(agent_id, alert_type)
+
+    # --- Delivery (only if not suppressed) ---
     delivered = False
     delivery_attempts = 0
     response_status = None
     webhook_url = None
-
-    if plan_config.webhook_alerts:
-        webhook_url = get_webhook_url(agent_id)
-        if webhook_url:
-            payload = {
-                "event": "verification.failed",
-                "alert_id": alert_id,
-                "agent_id": agent_id,
-                "execution_id": execution_id,
-                "confidence": confidence,
-                "action": action,
-                "failure_types": failure_types,
-                "summary": f"Agent {agent_id} output {action}ed verification (confidence={confidence})",
-            }
-            delivered, response_status = await deliver(webhook_url, payload)
-            delivery_attempts = 3 if not delivered else 1
-
-    # --- Slack delivery (gated by plan) ---
     slack_delivered = False
     slack_url = None
 
-    if plan_config.slack_alerts:
-        slack_url = get_slack_webhook_url(agent_id)
-        if slack_url:
-            slack_payload = format_slack_message(
-                alert_id=alert_id,
-                agent_id=agent_id,
-                execution_id=execution_id,
-                action=action,
-                severity=severity,
-                confidence=confidence,
-                failure_types=failure_types,
-                dashboard_base_url=DASHBOARD_BASE_URL,
-            )
-            slack_delivered, _ = await deliver_slack(slack_url, slack_payload)
+    if should_send:
+        # HTTP webhook delivery (gated by plan)
+        if plan_config.webhook_alerts:
+            webhook_url = get_webhook_url(agent_id)
+            if webhook_url:
+                payload = {
+                    "event": "verification.failed",
+                    "alert_id": alert_id,
+                    "agent_id": agent_id,
+                    "execution_id": execution_id,
+                    "confidence": confidence,
+                    "action": action,
+                    "failure_types": failure_types,
+                    "summary": f"Agent {agent_id} output {action}ed verification (confidence={confidence})",
+                }
+                if suppressed_count > 0:
+                    payload["suppressed_count"] = suppressed_count
+                    payload["summary"] += f" ({suppressed_count} similar events suppressed in last 5 min)"
+                delivered, response_status = await deliver(webhook_url, payload)
+                delivery_attempts = 3 if not delivered else 1
+
+        # Slack delivery (gated by plan)
+        if plan_config.slack_alerts:
+            slack_url = get_slack_webhook_url(agent_id)
+            if slack_url:
+                slack_payload = format_slack_message(
+                    alert_id=alert_id,
+                    agent_id=agent_id,
+                    execution_id=execution_id,
+                    action=action,
+                    severity=severity,
+                    confidence=confidence,
+                    failure_types=failure_types,
+                    dashboard_base_url=DASHBOARD_BASE_URL,
+                    suppressed_count=suppressed_count,
+                )
+                slack_delivered, _ = await deliver_slack(slack_url, slack_payload)
 
     # Combined delivery status: either channel succeeded
     any_delivered = delivered or slack_delivered
@@ -179,7 +192,7 @@ async def process_verified_event(
             "execution_id": execution_id,
             "agent_id": agent_id,
             "org_id": org_id,
-            "alert_type": f"verification_{action}",
+            "alert_type": alert_type,
             "severity": severity,
             "delivered": any_delivered,
             "webhook_url": webhook_url or slack_url,

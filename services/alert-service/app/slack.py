@@ -49,6 +49,7 @@ def format_slack_message(
     confidence: Optional[float],
     failure_types: List[str],
     dashboard_base_url: Optional[str] = None,
+    suppressed_count: int = 0,
 ) -> Dict[str, Any]:
     """Build a Slack Block Kit message for an alert.
 
@@ -82,6 +83,14 @@ def format_slack_message(
             ],
         },
     ]
+
+    if suppressed_count > 0:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f":repeat: {suppressed_count} similar events suppressed in the last 5 minutes"},
+            ],
+        })
 
     if dashboard_base_url:
         blocks.append({

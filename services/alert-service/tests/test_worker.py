@@ -5,7 +5,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.worker import process_verified_event
+from app.worker import _deduplicator, process_verified_event
+
+
+@pytest.fixture(autouse=True)
+def reset_dedup():
+    """Reset deduplicator state between tests."""
+    _deduplicator.reset()
+    yield
+    _deduplicator.reset()
 
 
 @pytest.fixture
@@ -221,3 +229,40 @@ async def test_slack_failure_does_not_block_alert_creation(flag_event, mock_db_s
     assert result["delivered"] is False
     assert result["slack_delivered"] is False
     mock_db_session.commit.assert_called_once()
+
+
+# --- Deduplication tests ---
+
+
+@pytest.mark.asyncio
+async def test_duplicate_alert_suppressed(flag_event, mock_db_session):
+    """Second identical alert within window is suppressed (no delivery)."""
+    with _mock_plan_lookup("pro"), \
+         patch("app.worker.get_webhook_url", return_value="https://hooks.example.com/alert"), \
+         patch("app.worker.deliver", new_callable=AsyncMock, return_value=(True, 200)) as mock_deliver, \
+         patch("app.worker.get_slack_webhook_url", return_value=None):
+        # First alert — delivered
+        result1 = await process_verified_event(flag_event, mock_db_session)
+        assert result1["delivered"] is True
+        assert mock_deliver.call_count == 1
+
+        # Second alert (same agent + type) — suppressed
+        result2 = await process_verified_event(flag_event, mock_db_session)
+        assert result2["delivered"] is False
+        assert mock_deliver.call_count == 1  # no additional call
+
+
+@pytest.mark.asyncio
+async def test_different_agent_not_deduplicated(flag_event, mock_db_session):
+    """Alerts from different agents are not deduplicated."""
+    flag_event_2 = {**flag_event, "agent_id": "other-bot"}
+
+    with _mock_plan_lookup("pro"), \
+         patch("app.worker.get_webhook_url", return_value="https://hooks.example.com/alert"), \
+         patch("app.worker.deliver", new_callable=AsyncMock, return_value=(True, 200)) as mock_deliver, \
+         patch("app.worker.get_slack_webhook_url", return_value=None):
+        await process_verified_event(flag_event, mock_db_session)
+        result2 = await process_verified_event(flag_event_2, mock_db_session)
+
+    assert result2["delivered"] is True
+    assert mock_deliver.call_count == 2
