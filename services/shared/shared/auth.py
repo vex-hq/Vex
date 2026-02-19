@@ -27,6 +27,8 @@ from typing import Deque, Dict, List, Optional
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from shared.plan_limits import get_plan_config
+
 logger = logging.getLogger("agentguard.auth")
 
 VALID_SCOPES = frozenset({"ingest", "verify", "read"})
@@ -39,6 +41,7 @@ class KeyInfo:
     org_id: str
     key_id: str
     scopes: List[str]
+    plan: str = "free"
 
 
 @dataclass
@@ -51,6 +54,7 @@ class _CachedKey:
     rate_limit_rpm: int
     expires_at: Optional[datetime]
     revoked: bool
+    plan: str = "free"
     cached_at: float = field(default_factory=time.monotonic)
 
 
@@ -159,13 +163,17 @@ class KeyValidator:
         # 6. Check rate limit
         self._check_rate_limit(entry)
 
-        # 7. Track usage (batched)
+        # 7. Check monthly quota
+        self._check_quota(entry)
+
+        # 8. Track usage (batched)
         self._track_usage(entry.key_id)
 
         return KeyInfo(
             org_id=entry.org_id,
             key_id=entry.key_id,
             scopes=entry.scopes,
+            plan=entry.plan,
         )
 
     def flush_usage(self) -> None:
@@ -241,7 +249,7 @@ class KeyValidator:
                 result = conn.execute(
                     text(
                         """
-                        SELECT org_id, api_keys
+                        SELECT org_id, api_keys, plan
                         FROM organizations
                         WHERE api_keys @> CAST(:filter AS jsonb)
                         """
@@ -258,6 +266,8 @@ class KeyValidator:
 
         org_id = row[0]
         api_keys = row[1] if isinstance(row[1], list) else json.loads(row[1])
+        plan_val = row[2] if row[2] else "free"
+        plan_config = get_plan_config(plan_val)
 
         # Find the matching key entry in the JSONB array
         for key_entry in api_keys:
@@ -268,16 +278,60 @@ class KeyValidator:
                         key_entry["expires_at"].replace("Z", "+00:00")
                     )
 
+                per_key_rpm = key_entry.get("rate_limit_rpm", 1000)
+                effective_rpm = min(per_key_rpm, plan_config.max_rpm)
+
                 return _CachedKey(
                     org_id=org_id,
                     key_id=key_entry["id"],
                     scopes=key_entry.get("scopes", []),
-                    rate_limit_rpm=key_entry.get("rate_limit_rpm", 1000),
+                    rate_limit_rpm=effective_rpm,
                     expires_at=expires_at,
                     revoked=key_entry.get("revoked", False),
+                    plan=plan_val,
                 )
 
         return None
+
+    def _check_quota(self, entry: _CachedKey) -> None:
+        """Enforce monthly quota based on organization plan."""
+        plan_config = get_plan_config(entry.plan)
+
+        if self._required_scope == "verify":
+            monthly_limit = plan_config.verifications_per_month
+        else:
+            monthly_limit = plan_config.observations_per_month
+
+        try:
+            with self._engine.connect() as conn:
+                result = conn.execute(
+                    text(
+                        """
+                        SELECT COALESCE(SUM(execution_count), 0)
+                        FROM hourly_agent_stats
+                        WHERE org_id = :org_id
+                          AND bucket >= date_trunc('month', NOW())
+                        """
+                    ),
+                    {"org_id": entry.org_id},
+                )
+                current_usage = result.scalar() or 0
+        except Exception:
+            logger.warning("Failed to check quota, allowing request", exc_info=True)
+            return
+
+        if current_usage >= monthly_limit:
+            if not plan_config.overage_allowed:
+                raise AuthError(
+                    429,
+                    f"Monthly quota exceeded ({current_usage}/{monthly_limit}). "
+                    f"Upgrade your plan at https://app.tryvex.dev",
+                    retry_after_seconds=3600,
+                )
+            logger.info(
+                "Overage: org=%s plan=%s usage=%d limit=%d",
+                entry.org_id, entry.plan, current_usage, monthly_limit,
+            )
 
     def _check_rate_limit(self, entry: _CachedKey) -> None:
         """Enforce per-key sliding window rate limit."""
