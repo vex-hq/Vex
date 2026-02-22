@@ -6,4 +6,4 @@
 	url = https://github.com/Vex-AI-Dev/Typescript-sdk.git
 [submodule "Dashboard"]
 	path = Dashboard
-	url = https://github.com/Vex-AI-Dev/Dashboard.git
+	url = https://github.com/Vex-AI-Dev/Vex-Dashboard.git
