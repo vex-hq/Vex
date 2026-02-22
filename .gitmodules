@@ -1,9 +1,9 @@
-[submodule "nextjs-application"]
-	path = nextjs-application
-	url = https://github.com/Vex-AI-Dev/Dashboard.git
 [submodule "sdk/python"]
 	path = sdk/python
 	url = https://github.com/Vex-AI-Dev/Python-SDK.git
 [submodule "sdk/typescript"]
 	path = sdk/typescript
 	url = https://github.com/Vex-AI-Dev/Typescript-sdk.git
+[submodule "Dashboard"]
+	path = Dashboard
+	url = https://github.com/Vex-AI-Dev/Dashboard.git
