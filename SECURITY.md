@@ -23,8 +23,8 @@ We will coordinate disclosure with you and credit you in the advisory (unless yo
 
 This policy applies to all Vex repositories:
 
-- [AgentGuard](https://github.com/Vex-AI-Dev/AgentGuard) (core engine and services)
-- [Dashboard](https://github.com/Vex-AI-Dev/Dashboard) (web dashboard)
+- [AgentGuard](https://github.com/Vex-AI-Dev/Vex) (core engine and services)
+- [Dashboard](https://github.com/Vex-AI-Dev/Vex-Dashboard) (web dashboard)
 - [Python-SDK](https://github.com/Vex-AI-Dev/Python-SDK)
 - [Typescript-sdk](https://github.com/Vex-AI-Dev/Typescript-sdk)
 

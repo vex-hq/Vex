@@ -12,8 +12,8 @@ Thanks for your interest in contributing to Vex. Every contribution matters — 
 ## Development Setup
 
 ```bash
-git clone --recurse-submodules https://github.com/vex-ai/AgentGuard.git
-cd AgentGuard
+git clone --recurse-submodules https://github.com/Vex-AI-Dev/Vex.git
+cd Vex
 ```
 
 ### Services (Python)
@@ -79,7 +79,7 @@ docs: add SDK quickstart guide
 Vex is dual-licensed:
 
 - **SDK contributions** (Python-SDK, Typescript-sdk) are licensed under **Apache 2.0**.
-- **Engine contributions** (AgentGuard core, services) are licensed under **AGPLv3**.
+- **Engine contributions** (Vex core, services) are licensed under **AGPLv3**.
 
 By submitting a pull request to AGPLv3-licensed components, you agree that Vex AI, Inc. may dual-license your contribution under commercial terms in addition to AGPLv3.
 
