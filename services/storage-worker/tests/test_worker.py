@@ -346,3 +346,210 @@ def test_process_event_filters_non_tool_steps(mock_s3, mock_db_session):
     process_event(event, s3_client=mock_s3, db_session=mock_db_session, org_id="org-1")
     # 2 base + 1 tool_call = 3
     assert mock_db_session.execute.call_count == 3
+
+
+# --- Consumer loop tests ---
+
+
+@pytest.mark.asyncio
+async def test_ensure_consumer_group_creates_group():
+    """_ensure_consumer_group should call xgroup_create."""
+    from unittest.mock import AsyncMock
+    from app.main import _ensure_consumer_group
+
+    mock_redis = AsyncMock()
+    mock_redis.xgroup_create = AsyncMock()
+    await _ensure_consumer_group(mock_redis, "test.stream", "test-group")
+    mock_redis.xgroup_create.assert_called_once_with(
+        "test.stream", "test-group", id="0", mkstream=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_consumer_group_ignores_existing():
+    """_ensure_consumer_group should not raise if group already exists."""
+    from unittest.mock import AsyncMock
+    from app.main import _ensure_consumer_group
+
+    mock_redis = AsyncMock()
+    mock_redis.xgroup_create = AsyncMock(
+        side_effect=Exception("BUSYGROUP Consumer Group name already exists")
+    )
+    # Should not raise
+    await _ensure_consumer_group(mock_redis, "test.stream", "test-group")
+
+
+@pytest.mark.asyncio
+async def test_consume_raw_processes_event_and_publishes():
+    """_consume_raw should process events, ACK them, and publish to stored stream."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.main import _consume_raw, RAW_STREAM_KEY, RAW_CONSUMER_GROUP, STORED_STREAM_KEY
+
+    mock_redis = AsyncMock()
+    mock_s3 = MagicMock()
+
+    event = IngestEvent(
+        execution_id="exec-raw-1",
+        agent_id="bot",
+        input="x",
+        output="y",
+        metadata={"org_id": "org-1"},
+    )
+
+    call_count = 0
+
+    async def mock_xreadgroup(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return [(RAW_STREAM_KEY, [("msg-1", {"data": event.model_dump_json()})])]
+        raise asyncio.CancelledError()
+
+    mock_redis.xreadgroup = mock_xreadgroup
+    mock_redis.xack = AsyncMock()
+    mock_redis.xadd = AsyncMock()
+
+    stored_notification = {"execution_id": "exec-raw-1", "action": "pass"}
+    mock_session = MagicMock()
+
+    with patch("app.main.SessionLocal", return_value=mock_session):
+        with patch("app.main.process_event", return_value=stored_notification) as mock_process:
+            with pytest.raises(asyncio.CancelledError):
+                await _consume_raw(mock_redis, mock_s3)
+
+    mock_process.assert_called_once()
+    mock_redis.xack.assert_called_once_with(RAW_STREAM_KEY, RAW_CONSUMER_GROUP, "msg-1")
+    mock_redis.xadd.assert_called_once()
+    # Verify published to stored stream
+    assert mock_redis.xadd.call_args[0][0] == STORED_STREAM_KEY
+    mock_session.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_consume_raw_rolls_back_on_process_error():
+    """_consume_raw should rollback DB session when process_event raises."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.main import _consume_raw, RAW_STREAM_KEY
+
+    mock_redis = AsyncMock()
+    mock_s3 = MagicMock()
+
+    event = IngestEvent(
+        execution_id="exec-err",
+        agent_id="bot",
+        input="x",
+        output="y",
+        metadata={"org_id": "org-1"},
+    )
+
+    call_count = 0
+
+    async def mock_xreadgroup(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return [(RAW_STREAM_KEY, [("msg-1", {"data": event.model_dump_json()})])]
+        raise asyncio.CancelledError()
+
+    mock_redis.xreadgroup = mock_xreadgroup
+    mock_redis.xack = AsyncMock()
+    mock_redis.xadd = AsyncMock()
+
+    mock_session = MagicMock()
+
+    with patch("app.main.SessionLocal", return_value=mock_session):
+        with patch("app.main.process_event", side_effect=RuntimeError("DB error")):
+            with pytest.raises(asyncio.CancelledError):
+                await _consume_raw(mock_redis, mock_s3)
+
+    mock_session.rollback.assert_called_once()
+    mock_session.close.assert_called_once()
+    # Message should NOT be ACKed
+    mock_redis.xack.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_consume_verified_processes_and_publishes():
+    """_consume_verified should process verified events, ACK, and publish."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.main import _consume_verified, VERIFIED_STREAM_KEY, VERIFIED_CONSUMER_GROUP, STORED_STREAM_KEY
+
+    mock_redis = AsyncMock()
+
+    verified_data = json.dumps({
+        "execution_id": "exec-v1",
+        "agent_id": "bot",
+        "confidence": "0.9",
+        "action": "pass",
+        "checks": "{}",
+    })
+
+    call_count = 0
+
+    async def mock_xreadgroup(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return [(VERIFIED_STREAM_KEY, [("msg-1", {"data": verified_data})])]
+        raise asyncio.CancelledError()
+
+    mock_redis.xreadgroup = mock_xreadgroup
+    mock_redis.xack = AsyncMock()
+    mock_redis.xadd = AsyncMock()
+
+    updated_notification = {"execution_id": "exec-v1", "action": "pass"}
+    mock_session = MagicMock()
+
+    with patch("app.main.SessionLocal", return_value=mock_session):
+        with patch("app.main.process_verified_event", return_value=updated_notification):
+            with pytest.raises(asyncio.CancelledError):
+                await _consume_verified(mock_redis)
+
+    mock_redis.xack.assert_called_once_with(VERIFIED_STREAM_KEY, VERIFIED_CONSUMER_GROUP, "msg-1")
+    mock_redis.xadd.assert_called_once()
+    assert mock_redis.xadd.call_args[0][0] == STORED_STREAM_KEY
+
+
+@pytest.mark.asyncio
+async def test_consume_raw_fallback_org_id():
+    """Events without org_id in metadata should use fallback 'default'."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from app.main import _consume_raw, RAW_STREAM_KEY
+
+    mock_redis = AsyncMock()
+    mock_s3 = MagicMock()
+
+    event = IngestEvent(
+        execution_id="exec-no-org",
+        agent_id="bot",
+        input="x",
+        output="y",
+    )
+
+    call_count = 0
+
+    async def mock_xreadgroup(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return [(RAW_STREAM_KEY, [("msg-1", {"data": event.model_dump_json()})])]
+        raise asyncio.CancelledError()
+
+    mock_redis.xreadgroup = mock_xreadgroup
+    mock_redis.xack = AsyncMock()
+    mock_redis.xadd = AsyncMock()
+
+    mock_session = MagicMock()
+
+    with patch("app.main.SessionLocal", return_value=mock_session):
+        with patch("app.main.process_event", return_value={"execution_id": "exec-no-org"}) as mock_process:
+            with pytest.raises(asyncio.CancelledError):
+                await _consume_raw(mock_redis, mock_s3)
+
+    # Verify org_id fallback was used
+    call_kwargs = mock_process.call_args
+    assert call_kwargs[1]["org_id"] == "default" or call_kwargs.kwargs["org_id"] == "default"

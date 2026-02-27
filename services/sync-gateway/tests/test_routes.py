@@ -702,3 +702,83 @@ async def test_batch_rejects_over_50_events(client):
         headers={"X-Vex-Key": "test-key"},
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_health_check_redis_unreachable(mock_redis):
+    """Health check returns 503 when Redis ping fails."""
+    mock_redis.ping = AsyncMock(side_effect=ConnectionError("Redis down"))
+    application = create_app()
+    application.state.redis = mock_redis
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        response = await c.get("/health")
+    assert response.status_code == 503
+    assert "Redis unreachable" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_missing_api_key(mock_redis):
+    """Ingest endpoint without auth should return 401."""
+    application = create_app()
+    application.state.redis = mock_redis
+    transport = ASGITransport(app=application)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        response = await c.post(
+            "/v1/ingest",
+            json={"agent_id": "bot", "input": {}, "output": {}},
+        )
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_verify_redis_emit_failure_still_returns_response(client, mock_redis):
+    """If Redis emit fails after verification, the response should still be returned."""
+    mock_result = VerificationResult(
+        confidence=0.9,
+        action="pass",
+        checks={
+            "schema": CheckResult(check_type="schema", score=1.0, passed=True),
+        },
+    )
+    mock_redis.xadd = AsyncMock(side_effect=ConnectionError("Redis down"))
+
+    with patch("app.routes.run_verification", new_callable=AsyncMock, return_value=mock_result):
+        response = await client.post(
+            "/v1/verify",
+            json={
+                "agent_id": "test-bot",
+                "input": "hello",
+                "output": "world",
+            },
+            headers={"X-Vex-Key": "test-key"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["action"] == "pass"
+
+
+@pytest.mark.asyncio
+async def test_verify_invalid_payload(client):
+    """Verify endpoint with invalid payload returns 422."""
+    response = await client.post(
+        "/v1/verify",
+        json={"bad": "data"},
+        headers={"X-Vex-Key": "test-key"},
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_ingest_single_injects_org_id(client, mock_redis):
+    """Authenticated org_id should be injected into event metadata."""
+    response = await client.post(
+        "/v1/ingest",
+        json={"agent_id": "bot", "input": {}, "output": {}},
+        headers={"X-Vex-Key": "test-key"},
+    )
+    assert response.status_code == 202
+    call_args = mock_redis.xadd.call_args
+    payload = json.loads(call_args[0][1]["data"])
+    assert payload["metadata"]["org_id"] == "test-org"

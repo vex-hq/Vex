@@ -129,3 +129,112 @@ class TestConnectionManager:
         mgr = ConnectionManager()
         # Should not raise
         await mgr.broadcast({"type": "test"})
+
+
+class TestStreamUpdates:
+    """Unit tests for the stream_updates background task."""
+
+    @pytest.mark.asyncio
+    async def test_stream_updates_broadcasts_messages(self):
+        """stream_updates should broadcast parsed Redis messages to WebSocket clients."""
+        import json
+        from app.websocket import stream_updates, manager
+
+        mock_redis = AsyncMock()
+        call_count = 0
+
+        async def mock_xread(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [
+                    (
+                        "executions.stored",
+                        [
+                            (
+                                "1234-0",
+                                {"data": json.dumps({"execution_id": "e1", "action": "pass"})},
+                            )
+                        ],
+                    )
+                ]
+            raise asyncio.CancelledError()
+
+        mock_redis.xread = mock_xread
+        mock_redis.aclose = AsyncMock()
+
+        mock_ws = AsyncMock()
+        original_connections = manager.active_connections[:]
+        manager.active_connections = [mock_ws]
+
+        try:
+            with patch("redis.asyncio.from_url", return_value=mock_redis):
+                with pytest.raises(asyncio.CancelledError):
+                    await stream_updates("redis://localhost:6379")
+        finally:
+            manager.active_connections = original_connections
+
+        mock_ws.send_json.assert_called_once()
+        sent_data = mock_ws.send_json.call_args[0][0]
+        assert sent_data["type"] == "execution.new"
+        assert sent_data["data"]["execution_id"] == "e1"
+
+    @pytest.mark.asyncio
+    async def test_stream_updates_skips_malformed_json(self):
+        """Malformed JSON in stream messages should be skipped without crashing."""
+        from app.websocket import stream_updates, manager
+
+        mock_redis = AsyncMock()
+        call_count = 0
+
+        async def mock_xread(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return [
+                    (
+                        "executions.stored",
+                        [("1234-0", {"data": "not valid json{{"})],
+                    )
+                ]
+            raise asyncio.CancelledError()
+
+        mock_redis.xread = mock_xread
+        mock_redis.aclose = AsyncMock()
+
+        mock_ws = AsyncMock()
+        original_connections = manager.active_connections[:]
+        manager.active_connections = [mock_ws]
+
+        try:
+            with patch("redis.asyncio.from_url", return_value=mock_redis):
+                with pytest.raises(asyncio.CancelledError):
+                    await stream_updates("redis://localhost:6379")
+        finally:
+            manager.active_connections = original_connections
+
+        # No message should have been broadcast
+        mock_ws.send_json.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stream_updates_handles_connection_error(self):
+        """Redis connection errors in stream_updates should not crash the task."""
+        from app.websocket import stream_updates
+
+        mock_redis = AsyncMock()
+        call_count = 0
+
+        async def mock_xread(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectionError("Redis down")
+            raise asyncio.CancelledError()
+
+        mock_redis.xread = mock_xread
+        mock_redis.aclose = AsyncMock()
+
+        with patch("redis.asyncio.from_url", return_value=mock_redis):
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                with pytest.raises(asyncio.CancelledError):
+                    await stream_updates("redis://localhost:6379")
