@@ -2,6 +2,7 @@
 
 **The reliability layer for AI agents in production.**
 
+[![CI](https://github.com/Vex-AI-Dev/Vex/actions/workflows/ci.yml/badge.svg)](https://github.com/Vex-AI-Dev/Vex/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/SDKs-Apache%202.0-blue.svg)](./LICENSING.md)
 [![License: AGPL v3](https://img.shields.io/badge/Engine-AGPLv3-blue.svg)](./LICENSING.md)
 [![PyPI](https://img.shields.io/pypi/v/vex-sdk)](https://pypi.org/project/vex-sdk/)
