@@ -355,26 +355,24 @@ def test_process_event_filters_non_tool_steps(mock_s3, mock_db_session):
 async def test_ensure_consumer_group_creates_group():
     """_ensure_consumer_group should call xgroup_create."""
     from unittest.mock import AsyncMock
+
     from app.main import _ensure_consumer_group
 
     mock_redis = AsyncMock()
     mock_redis.xgroup_create = AsyncMock()
     await _ensure_consumer_group(mock_redis, "test.stream", "test-group")
-    mock_redis.xgroup_create.assert_called_once_with(
-        "test.stream", "test-group", id="0", mkstream=True
-    )
+    mock_redis.xgroup_create.assert_called_once_with("test.stream", "test-group", id="0", mkstream=True)
 
 
 @pytest.mark.asyncio
 async def test_ensure_consumer_group_ignores_existing():
     """_ensure_consumer_group should not raise if group already exists."""
     from unittest.mock import AsyncMock
+
     from app.main import _ensure_consumer_group
 
     mock_redis = AsyncMock()
-    mock_redis.xgroup_create = AsyncMock(
-        side_effect=Exception("BUSYGROUP Consumer Group name already exists")
-    )
+    mock_redis.xgroup_create = AsyncMock(side_effect=Exception("BUSYGROUP Consumer Group name already exists"))
     # Should not raise
     await _ensure_consumer_group(mock_redis, "test.stream", "test-group")
 
@@ -384,7 +382,8 @@ async def test_consume_raw_processes_event_and_publishes():
     """_consume_raw should process events, ACK them, and publish to stored stream."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, patch
-    from app.main import _consume_raw, RAW_STREAM_KEY, RAW_CONSUMER_GROUP, STORED_STREAM_KEY
+
+    from app.main import RAW_CONSUMER_GROUP, RAW_STREAM_KEY, STORED_STREAM_KEY, _consume_raw
 
     mock_redis = AsyncMock()
     mock_s3 = MagicMock()
@@ -431,7 +430,8 @@ async def test_consume_raw_rolls_back_on_process_error():
     """_consume_raw should rollback DB session when process_event raises."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, patch
-    from app.main import _consume_raw, RAW_STREAM_KEY
+
+    from app.main import RAW_STREAM_KEY, _consume_raw
 
     mock_redis = AsyncMock()
     mock_s3 = MagicMock()
@@ -475,17 +475,20 @@ async def test_consume_verified_processes_and_publishes():
     """_consume_verified should process verified events, ACK, and publish."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, patch
-    from app.main import _consume_verified, VERIFIED_STREAM_KEY, VERIFIED_CONSUMER_GROUP, STORED_STREAM_KEY
+
+    from app.main import STORED_STREAM_KEY, VERIFIED_CONSUMER_GROUP, VERIFIED_STREAM_KEY, _consume_verified
 
     mock_redis = AsyncMock()
 
-    verified_data = json.dumps({
-        "execution_id": "exec-v1",
-        "agent_id": "bot",
-        "confidence": "0.9",
-        "action": "pass",
-        "checks": "{}",
-    })
+    verified_data = json.dumps(
+        {
+            "execution_id": "exec-v1",
+            "agent_id": "bot",
+            "confidence": "0.9",
+            "action": "pass",
+            "checks": "{}",
+        }
+    )
 
     call_count = 0
 
@@ -518,7 +521,8 @@ async def test_consume_raw_fallback_org_id():
     """Events without org_id in metadata should use fallback 'default'."""
     import asyncio
     from unittest.mock import AsyncMock, MagicMock, patch
-    from app.main import _consume_raw, RAW_STREAM_KEY
+
+    from app.main import RAW_STREAM_KEY, _consume_raw
 
     mock_redis = AsyncMock()
     mock_s3 = MagicMock()

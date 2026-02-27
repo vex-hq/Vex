@@ -195,7 +195,8 @@ async def test_process_event_checks_serialized_correctly():
 async def test_run_skips_already_verified_events():
     """Events with already_verified=True in metadata should be ACKed and skipped."""
     import asyncio
-    from app.main import run, STREAM_KEY, CONSUMER_GROUP
+
+    from app.main import CONSUMER_GROUP, STREAM_KEY, run
 
     mock_redis = AsyncMock()
     mock_redis.xgroup_create = AsyncMock()
@@ -237,7 +238,8 @@ async def test_run_skips_already_verified_events():
 async def test_run_processes_normal_event():
     """Normal events should be processed, ACKed, and published to verified stream."""
     import asyncio
-    from app.main import run, STREAM_KEY, CONSUMER_GROUP, CONSUMER_NAME
+
+    from app.main import STREAM_KEY, run
 
     mock_redis = AsyncMock()
     mock_redis.xgroup_create = AsyncMock()
@@ -280,7 +282,8 @@ async def test_run_processes_normal_event():
 async def test_run_continues_on_per_message_error():
     """Per-message processing errors should be logged but not crash the loop."""
     import asyncio
-    from app.main import run, STREAM_KEY
+
+    from app.main import STREAM_KEY, run
 
     mock_redis = AsyncMock()
     mock_redis.xgroup_create = AsyncMock()

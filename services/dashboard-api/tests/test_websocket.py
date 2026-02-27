@@ -138,7 +138,8 @@ class TestStreamUpdates:
     async def test_stream_updates_broadcasts_messages(self):
         """stream_updates should broadcast parsed Redis messages to WebSocket clients."""
         import json
-        from app.websocket import stream_updates, manager
+
+        from app.websocket import manager, stream_updates
 
         mock_redis = AsyncMock()
         call_count = 0
@@ -182,7 +183,7 @@ class TestStreamUpdates:
     @pytest.mark.asyncio
     async def test_stream_updates_skips_malformed_json(self):
         """Malformed JSON in stream messages should be skipped without crashing."""
-        from app.websocket import stream_updates, manager
+        from app.websocket import manager, stream_updates
 
         mock_redis = AsyncMock()
         call_count = 0
