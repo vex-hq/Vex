@@ -1,0 +1,38 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/services/ingestion-api"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/sync-gateway"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/async-worker"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/storage-worker"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/alert-service"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/dashboard-api"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/verification-engine"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/sdk/python"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
