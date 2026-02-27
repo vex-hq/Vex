@@ -47,3 +47,9 @@ htmlcov/
 
 # Logs
 *.log
+
+# Dev artifacts / screenshots
+/*.png
+/*.jpeg
+/*.jpg
+/*.zip
