@@ -1,0 +1,27 @@
+target-version = "py39"
+line-length = 120
+
+exclude = [
+    ".venv",
+    "venv",
+    "__pycache__",
+    "*.egg-info",
+    "alembic/versions",
+]
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # function call in default argument (idiomatic FastAPI Depends)
+]
+
+[format]
+quote-style = "double"
