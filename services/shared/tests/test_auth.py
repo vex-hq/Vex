@@ -44,9 +44,9 @@ RAW_KEY = "ag_live_testkey1234567890abcdefgh"
 KEY_HASH = hashlib.sha256(RAW_KEY.encode("utf-8")).hexdigest()
 
 
-def _make_db_row(api_keys, org_id="test-org"):
-    """Create a mock DB row tuple (org_id, api_keys)."""
-    return (org_id, api_keys)
+def _make_db_row(api_keys, org_id="test-org", account_slug="test-org"):
+    """Create a mock DB row tuple (org_id, api_keys, account_slug)."""
+    return (org_id, api_keys, account_slug)
 
 
 def _build_validator(required_scope="verify", cache_ttl_s=60.0):
@@ -67,6 +67,7 @@ def _mock_db_query(mock_engine, row):
     mock_conn = MagicMock()
     mock_result = MagicMock()
     mock_result.fetchone.return_value = row
+    mock_result.scalar.return_value = 0  # quota usage = 0
     mock_conn.execute.return_value = mock_result
     mock_conn.__enter__ = MagicMock(return_value=mock_conn)
     mock_conn.__exit__ = MagicMock(return_value=False)
@@ -282,13 +283,14 @@ class TestCacheBehavior:
         validator, engine = _build_validator()
         mock_conn = _mock_db_query(engine, _make_db_row([entry]))
 
-        # First call queries DB
+        # First call queries DB (key lookup + quota check)
         validator.validate(raw_key)
         call_count_after_first = mock_conn.execute.call_count
 
-        # Second call should use cache (no additional DB query)
+        # Second call should use cache for key lookup but still check quota
+        # So only 1 additional call (quota), not 2 (key lookup + quota)
         validator.validate(raw_key)
-        assert mock_conn.execute.call_count == call_count_after_first
+        assert mock_conn.execute.call_count == call_count_after_first + 1
 
     def test_cache_expiry_re_queries_db(self):
         entry, raw_key, _ = _make_key_entry()
