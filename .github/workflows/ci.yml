@@ -36,6 +36,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: actions/setup-python@v5
         with:
@@ -88,6 +90,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - uses: actions/setup-node@v4
         with:
@@ -98,11 +102,11 @@ jobs:
           version: 10
 
       - name: Install dependencies
-        working-directory: nextjs-application
+        working-directory: Dashboard
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        working-directory: nextjs-application
+        working-directory: Dashboard
         run: pnpm --filter web typecheck
 
   docker-build:

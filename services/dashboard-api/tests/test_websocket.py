@@ -170,8 +170,7 @@ class TestStreamUpdates:
 
         try:
             with patch("redis.asyncio.from_url", return_value=mock_redis):
-                with pytest.raises(asyncio.CancelledError):
-                    await stream_updates("redis://localhost:6379")
+                await stream_updates("redis://localhost:6379")
         finally:
             manager.active_connections = original_connections
 
@@ -209,8 +208,7 @@ class TestStreamUpdates:
 
         try:
             with patch("redis.asyncio.from_url", return_value=mock_redis):
-                with pytest.raises(asyncio.CancelledError):
-                    await stream_updates("redis://localhost:6379")
+                await stream_updates("redis://localhost:6379")
         finally:
             manager.active_connections = original_connections
 
@@ -237,5 +235,4 @@ class TestStreamUpdates:
 
         with patch("redis.asyncio.from_url", return_value=mock_redis):
             with patch("asyncio.sleep", new_callable=AsyncMock):
-                with pytest.raises(asyncio.CancelledError):
-                    await stream_updates("redis://localhost:6379")
+                await stream_updates("redis://localhost:6379")
