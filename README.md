@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/vex-readme-banner.png" alt="Vex — Agent reliability infrastructure" width="100%">
+</p>
+
 # Vex
 
 **The reliability layer for AI agents in production.**
