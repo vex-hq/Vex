@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  NAMESPACE: vexhq
+  NAMESPACE: 7hakurg
 
 jobs:
   build-and-push:
