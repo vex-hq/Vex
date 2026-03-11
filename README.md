@@ -8,7 +8,6 @@
 
 [![CI](https://github.com/Vex-AI-Dev/Vex/actions/workflows/ci.yml/badge.svg)](https://github.com/Vex-AI-Dev/Vex/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/SDKs-Apache%202.0-blue.svg)](./LICENSING.md)
-[![License: AGPL v3](https://img.shields.io/badge/Engine-AGPLv3-blue.svg)](./LICENSING.md)
 [![PyPI](https://img.shields.io/pypi/v/vex-sdk)](https://pypi.org/project/vex-sdk/)
 [![npm](https://img.shields.io/npm/v/@vex_dev/sdk)](https://www.npmjs.com/package/@vex_dev/sdk)
 [![Docs](https://img.shields.io/badge/docs-docs.tryvex.dev-brightgreen)](https://docs.tryvex.dev)
@@ -53,14 +52,6 @@ See the [full documentation](https://docs.tryvex.dev) for TypeScript examples, g
 | [`Dashboard/`](./Dashboard) | Next.js dashboard and landing page | AGPL-3.0 |
 | [`sdk/python/`](./sdk/python) | Python SDK (`vex-sdk` on PyPI) | Apache-2.0 |
 | [`sdk/typescript/`](./sdk/typescript) | TypeScript SDK (`@vex_dev/sdk` on npm) | Apache-2.0 |
-| [`services/`](./services) | Backend microservices | AGPL-3.0 |
-
-**Services** include: ingestion-api, verification-engine, alert-service, sync-gateway, storage-worker, async-worker, and a shared library.
-
-## Self-Hosting
-
-Vex can be self-hosted on your own infrastructure. See the [self-hosting guide](https://docs.tryvex.dev/self-hosting) for setup instructions, configuration options, and deployment recommendations.
-
 ## Managed Cloud
 
 For a fully managed experience, sign up at [app.tryvex.dev](https://app.tryvex.dev). The managed cloud includes automatic updates, built-in monitoring, and zero infrastructure overhead.
@@ -70,9 +61,17 @@ For a fully managed experience, sign up at [app.tryvex.dev](https://app.tryvex.d
 Vex uses a dual-license model:
 
 - **SDKs** (Python, TypeScript) — [Apache License 2.0](./LICENSING.md)
-- **Dashboard and Services** — [GNU AGPL v3](./LICENSING.md)
+- **Dashboard** — [GNU AGPL v3](./LICENSING.md)
+- **Engine** — Proprietary (managed platform at [api.tryvex.dev](https://api.tryvex.dev))
 
 See [LICENSING.md](./LICENSING.md) for full details.
+
+## Enterprise
+
+For enterprise self-hosting licenses or custom deployment options, contact:
+
+- [Twitter](https://x.com/7hakurg)
+- [LinkedIn](https://linkedin.com/in/thakurg)
 
 ## Contributing
 
