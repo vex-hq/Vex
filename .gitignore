@@ -37,9 +37,6 @@ Thumbs.db
 *.tfstate.backup
 *.tfvars
 
-# Docker
-docker-compose.override.yml
-
 # Testing
 .coverage
 htmlcov/
@@ -53,3 +50,9 @@ htmlcov/
 /*.jpeg
 /*.jpg
 /*.zip
+
+# Reference repos (cloned for research, not part of this project)
+supermemory/
+mem0/
+vex-final/
+.playwright-mcp/
